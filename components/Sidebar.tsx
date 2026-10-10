@@ -18,23 +18,23 @@ const I: Record<string, React.ReactNode> = {
   fin: <><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1" /><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4" /></>,
 };
 
-// "pronto: false" = módulo previsto, ainda não construído nesta fase
+// "pronto: true" = módulo previsto, ainda não construído nesta fase
 const MENU: { grupo: string; itens: { href: string; nome: string; icone: string; pronto: boolean; novo?: boolean }[] }[] = [
   { grupo: "Visão geral", itens: [
     { href: "/dashboard", nome: "Dashboard", icone: "dash", pronto: true },
-    { href: "/ranking", nome: "Ranking / Metas", icone: "ranking", pronto: false },
-    { href: "/relatorios", nome: "Relatórios", icone: "rel", pronto: false },
+    { href: "/ranking", nome: "Ranking / Metas", icone: "ranking", pronto: true },
+    { href: "/relatorios", nome: "Relatórios", icone: "rel", pronto: true },
   ]},
   { grupo: "Gestão", itens: [
     { href: "/clientes", nome: "Clientes", icone: "cli", pronto: true },
-    { href: "/crm", nome: "CRM Pro", icone: "crm", pronto: false, novo: true },
+    { href: "/crm", nome: "CRM Pro", icone: "crm", pronto: true, novo: true },
     { href: "/comercial", nome: "Comercial", icone: "com", pronto: true },
     { href: "/render", nome: "Render Pro", icone: "render", pronto: true },
     { href: "/radar", nome: "Radar de Prazos", icone: "radar", pronto: true },
-    { href: "/assistencia", nome: "Assistência Técnica", icone: "at", pronto: false },
+    { href: "/assistencia", nome: "Assistência Técnica", icone: "at", pronto: true },
   ]},
   { grupo: "Administrativo", itens: [
-    { href: "/financeiro", nome: "Financeiro", icone: "fin", pronto: false },
+    { href: "/financeiro", nome: "Financeiro", icone: "fin", pronto: true },
     { href: "/equipe", nome: "Equipe", icone: "cli", pronto: true },
   ]},
 ];
