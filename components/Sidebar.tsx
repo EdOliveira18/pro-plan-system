@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import { trocarEmpresa } from "@/app/(app)/acoes-gerais";
 import { sair } from "@/app/login/actions";
 import type { Empresa } from "@/lib/contexto";
@@ -67,6 +68,9 @@ export default function Sidebar({ empresa, empresas, nome, email }: { empresa: E
   const path = usePathname();
   const router = useRouter();
   const busca = useSearchParams();
+  // no celular o menu fica numa faixa de ícones à esquerda; o botão ☰ abre a lista completa por cima
+  const [aberto, setAberto] = useState(false);
+  useEffect(() => setAberto(false), [path, busca]);
   // subitem ativo: mesma rota e mesmos parâmetros principais (tipo/atraso/aba/lixeira)
   const subAtivo = (h: string) => {
     const [rota, qs] = h.split("?");
@@ -78,7 +82,10 @@ export default function Sidebar({ empresa, empresas, nome, email }: { empresa: E
     ? it.filhos.some(([h]) => { const r = h.split("?")[0]; return path === r || (r !== "/financeiro" && path.startsWith(r + "/")); }) || (it.href !== "/cadastros" && path.startsWith(it.href + "/"))
     : path === it.href || path.startsWith(it.href + "/"));
   return (
-    <aside className="side">
+    <>
+    {aberto && <div className="side-fundo" onClick={() => setAberto(false)} aria-hidden />}
+    <aside className={"side" + (aberto ? " aberto" : "")}>
+      <button type="button" className="menu-btn" aria-label={aberto ? "Fechar menu" : "Abrir menu"} aria-expanded={aberto} onClick={() => setAberto(!aberto)}>{aberto ? "✕" : "☰"}</button>
       <div className="brand"><div className="mk">PP</div><div><b>Pro Plan System</b><small>ERP de planejados</small></div></div>
       <div className="company">
         <select aria-label="Empresa" value={empresa.id} onChange={async (e) => {
@@ -96,12 +103,12 @@ export default function Sidebar({ empresa, empresas, nome, email }: { empresa: E
             <div className="navlabel">{g.grupo}</div>
             {g.itens.map((it) => it.filhos ? (
               <details key={it.href} open={dentro(it) || undefined}>
-                <summary aria-current={dentro(it) ? "true" : undefined}><svg viewBox="0 0 24 24">{I[it.icone]}</svg>{it.nome}{it.novo && <span className="tag">NOVO</span>}<svg className="seta" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></summary>
+                <summary aria-current={dentro(it) ? "true" : undefined} title={it.nome} onClick={() => { if (!aberto && window.matchMedia("(max-width:760px)").matches) setAberto(true); }}><svg viewBox="0 0 24 24">{I[it.icone]}</svg><span className="rot">{it.nome}</span>{it.novo && <span className="tag">NOVO</span>}<svg className="seta" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></summary>
                 {it.filhos.map(([h, n]) => <Link key={h} href={h} className="sub" aria-current={subAtivo(h) ? "page" : undefined}>{n}</Link>)}
               </details>
             ) : (
-              <Link key={it.href} href={it.href} aria-current={dentro(it) ? "page" : undefined}>
-                <svg viewBox="0 0 24 24">{I[it.icone]}</svg>{it.nome}{it.novo && <span className="tag">NOVO</span>}
+              <Link key={it.href} href={it.href} title={it.nome} aria-current={dentro(it) ? "page" : undefined}>
+                <svg viewBox="0 0 24 24">{I[it.icone]}</svg><span className="rot">{it.nome}</span>{it.novo && <span className="tag">NOVO</span>}
               </Link>
             ))}
           </div>
@@ -113,5 +120,6 @@ export default function Sidebar({ empresa, empresas, nome, email }: { empresa: E
         <form action={sair}><button>Sair</button></form>
       </div>
     </aside>
+    </>
   );
 }

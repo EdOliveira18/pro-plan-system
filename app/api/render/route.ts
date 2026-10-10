@@ -29,23 +29,35 @@ export async function POST(req: NextRequest) {
   const baixado = await sb.storage.from("arquivos").download(origem.storage_path);
   if (baixado.error) return falhar("Não consegui ler a imagem de origem: " + baixado.error.message);
 
-  const modelo = process.env.OPENAI_IMAGE_MODEL || "gpt-image-2";
-  const fd = new FormData();
-  fd.set("model", modelo);
-  fd.set("prompt", promptRender(r.tipo_origem, r.ambiente ?? "", r.estilo ?? "", r.instrucoes ?? ""));
-  fd.set("image", new File([await baixado.data.arrayBuffer()], "origem.png", { type: origem.mime || "image/png" }));
-  fd.set("size", "1536x1024");
-  fd.set("quality", process.env.OPENAI_IMAGE_QUALITY || "medium");
-  fd.set("n", "1");
-
+  const imagem = new File([await baixado.data.arrayBuffer()], "origem.png", { type: origem.mime || "image/png" });
+  const prompt = promptRender(r.tipo_origem, r.ambiente ?? "", r.estilo ?? "", r.instrucoes ?? "");
+  // tenta o modelo configurado e, se a conta não tiver acesso a ele, cai para os modelos de imagem mais comuns
+  const modelos = [...new Set([process.env.OPENAI_IMAGE_MODEL || "gpt-image-2", "gpt-image-1", "gpt-image-1-mini"])];
   let b64: string | undefined;
-  try {
-    const resp = await fetch("https://api.openai.com/v1/images/edits", { method: "POST", headers: { Authorization: `Bearer ${chave}` }, body: fd });
-    const json = await resp.json();
-    if (!resp.ok) return falhar("A IA recusou o pedido: " + (json?.error?.message ?? resp.statusText));
-    b64 = json?.data?.[0]?.b64_json;
-  } catch (e) {
-    return falhar("Falha de conexão com a IA de imagem: " + (e as Error).message);
+  let modelo = modelos[0];
+  for (const m of modelos) {
+    modelo = m;
+    const fd = new FormData();
+    fd.set("model", m);
+    fd.set("prompt", prompt);
+    fd.set("image", imagem);
+    fd.set("size", "1536x1024");
+    fd.set("quality", process.env.OPENAI_IMAGE_QUALITY || "medium");
+    fd.set("n", "1");
+    try {
+      const resp = await fetch("https://api.openai.com/v1/images/edits", { method: "POST", headers: { Authorization: `Bearer ${chave}` }, body: fd });
+      const json = await resp.json();
+      if (resp.ok) { b64 = json?.data?.[0]?.b64_json; break; }
+      const msg = String(json?.error?.message ?? resp.statusText);
+      const codigo = String(json?.error?.code ?? "");
+      if (/credit|billing|quota|insufficient/i.test(msg + codigo)) return falhar("A conta da OpenAI está sem créditos. Adicione créditos em platform.openai.com, em Settings › Billing, e clique em Refazer.", 402);
+      if (/invalid.?api.?key|incorrect api key/i.test(msg + codigo)) return falhar("A chave da OpenAI configurada na Vercel (OPENAI_API_KEY) é inválida ou foi revogada.", 401);
+      if (/verif/i.test(msg)) return falhar("A OpenAI exige verificar a organização para usar modelos de imagem. Faça a verificação em platform.openai.com, em Settings › Organization › General, e clique em Refazer.", 403);
+      if (/model|not found|does not exist|access/i.test(msg) && m !== modelos[modelos.length - 1]) continue;
+      return falhar("A IA recusou o pedido: " + msg);
+    } catch (e) {
+      return falhar("Falha de conexão com a IA de imagem: " + (e as Error).message);
+    }
   }
   if (!b64) return falhar("A IA não devolveu imagem.");
 
