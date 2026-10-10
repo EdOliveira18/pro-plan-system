@@ -5,7 +5,8 @@ import { contexto } from "@/lib/contexto";
 import { brl, pct, data } from "@/lib/formato";
 import { periodo, nomeMembro } from "@/lib/periodo";
 import SeletorMes from "@/components/SeletorMes";
-import { importarOFX, vincular, criarDaMovimentacao, ignorar, desfazer, reconciliar } from "./banco-actions";
+import { importarOFX, vincular, criarDaMovimentacao, ignorar, desfazer, reconciliar, sincronizarAgora } from "./banco-actions";
+import ConectarBanco from "@/components/ConectarBanco";
 import { sugerir } from "@/lib/banco/conciliar";
 
 const ABAS: [string, string][] = [["fluxo", "Fluxo de caixa"], ["banco", "Banco e conciliação"], ["contratos", "DRE por contrato"], ["comissoes", "Comissões"], ["fiscal", "Fiscal"]];
@@ -114,12 +115,14 @@ export default async function Financeiro({ searchParams }: { searchParams: Promi
   }
 
   if (aba === "banco") {
-    const [{ data: contas }, { data: pend }, { data: conc }, { data: abertos }] = await Promise.all([
+    const [{ data: contas }, { data: pend }, { data: conc }, { data: abertos }, { data: conexoes }] = await Promise.all([
       sb.from("contas_bancarias").select("*").eq("empresa_id", eid).order("created_at"),
       sb.from("extrato").select("*, conta:contas_bancarias(nome)").eq("empresa_id", eid).eq("status", "pendente").order("data", { ascending: false }).limit(200),
       sb.from("extrato").select("*, lancamento:lancamentos(descricao, categoria, contrato:contratos(codigo))").eq("empresa_id", eid).eq("status", "conciliado").order("data", { ascending: false }).limit(30),
       sb.from("lancamentos").select("id, data, valor, descricao, contrato:contratos(codigo)").eq("empresa_id", eid).eq("realizado", false),
+      sb.from("conexoes_bancarias").select("*").eq("empresa_id", eid).neq("status", "DELETED").order("created_at"),
     ]);
+    const openFinanceAtivo = !!process.env.PLUGGY_CLIENT_ID;
     const A = ((abertos ?? []) as any[]).map((l) => ({ ...l, valor: Number(l.valor) }));
     corpo = (<>
       <div className="grid two">
@@ -140,7 +143,23 @@ export default async function Financeiro({ searchParams }: { searchParams: Promi
               <span style={{ textAlign: "right" }}><span className="num">{c.saldo !== null ? brl(c.saldo) : "n/a"}</span><br /><span className="note">{c.saldo_em ? "saldo em " + data(c.saldo_em) : ""}</span></span></div>
           ))}
           {!contas?.length && <p className="note">Nenhuma conta ainda. Ela é criada na primeira importação.</p>}
-          <div className="lock p-info" style={{ marginBottom: 0 }}>Conexão automática pelo Open Finance (Pluggy) está preparada para quando o plano for contratado. As contas e a conciliação continuam as mesmas.</div>
+          <h2 className="mt">Open Finance <span className="note">CNPJ {ctx.empresa.cnpj ?? "não cadastrado"}</span></h2>
+          {(conexoes ?? []).map((cx: any) => (
+            <div key={cx.id} className="row" style={{ alignItems: "center" }}>
+              <span><b>{cx.instituicao ?? "Banco"}</b><br /><span className="note">{cx.ultimo_sync ? "Sincronizado " + new Date(cx.ultimo_sync).toLocaleString("pt-BR") : "Aguardando primeira sincronização"}</span>
+                {cx.erro && <><br /><span className="pill p-bad">{cx.erro}</span></>}</span>
+              <span style={{ display: "flex", gap: 6 }}>
+                <form action={sincronizarAgora.bind(null, cx.id)}><button className="btn sm">Atualizar agora</button></form>
+                {cx.status && cx.status !== "UPDATED" && <ConectarBanco sandbox={process.env.PLUGGY_SANDBOX === "1"} itemId={cx.item_id} rotulo="Reconectar" />}
+              </span>
+            </div>
+          ))}
+          {openFinanceAtivo ? (
+            <>
+              <ConectarBanco sandbox={process.env.PLUGGY_SANDBOX === "1"} />
+              <p className="note" style={{ marginBottom: 0 }}>A autorização é feita no app do próprio banco, com o login da conta PJ da empresa. Depois disso, cada movimentação nova chega sozinha e é conciliada automaticamente.</p>
+            </>
+          ) : <div className="lock p-info" style={{ marginBottom: 0 }}>O Open Finance está instalado e aguardando as credenciais da Pluggy no servidor. Enquanto isso, a importação de OFX funciona normalmente.</div>}
         </div>
       </div>
 

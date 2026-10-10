@@ -36,6 +36,7 @@ const MENU: { grupo: string; itens: { href: string; nome: string; icone: string;
   { grupo: "Administrativo", itens: [
     { href: "/financeiro", nome: "Financeiro", icone: "fin", pronto: true },
     { href: "/equipe", nome: "Equipe", icone: "cli", pronto: true },
+    { href: "/empresa", nome: "Empresa e fiscal", icone: "com", pronto: true },
   ]},
 ];
 

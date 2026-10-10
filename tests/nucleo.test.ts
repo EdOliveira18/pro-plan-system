@@ -105,3 +105,34 @@ test("conciliação: valor igual e data próxima; ambíguo fica pendente; sinal 
   assert.equal(r.has("m3"), false); // dois candidatos a 2 dias
   assert.equal(r.has("m4"), false); // sinal oposto
 });
+
+import forge from "node-forge";
+import { cnpjValido, formatarCNPJ } from "../lib/cnpj.ts";
+import { lerCertificadoA1 } from "../lib/certificado.ts";
+
+test("CNPJ: valida dígitos e formata", () => {
+  assert.equal(cnpjValido("11.222.333/0001-81"), true);
+  assert.equal(cnpjValido("11.222.333/0001-82"), false);
+  assert.equal(cnpjValido("00000000000000"), false);
+  assert.equal(formatarCNPJ("11222333000181"), "11.222.333/0001-81");
+});
+
+test("Certificado A1: lê titular, CNPJ e validade; recusa senha errada", () => {
+  const keys = forge.pki.rsa.generateKeyPair(1024);
+  const cert = forge.pki.createCertificate();
+  cert.publicKey = keys.publicKey;
+  cert.serialNumber = "01";
+  cert.validity.notBefore = new Date("2026-01-01");
+  cert.validity.notAfter = new Date("2027-01-01");
+  const attrs = [{ name: "commonName", value: "LOJA TESTE PLANEJADOS LTDA:11222333000181" }];
+  cert.setSubject(attrs); cert.setIssuer(attrs);
+  cert.sign(keys.privateKey, forge.md.sha256.create());
+  const p12 = forge.pkcs12.toPkcs12Asn1(keys.privateKey, [cert], "senha123", { algorithm: "3des" });
+  const der = forge.asn1.toDer(p12).getBytes();
+  const bytes = Uint8Array.from(der, (c) => c.charCodeAt(0));
+  const info = lerCertificadoA1(bytes, "senha123");
+  assert.equal(info.titular, "LOJA TESTE PLANEJADOS LTDA");
+  assert.equal(info.cnpj, "11222333000181");
+  assert.equal(info.validoAte.toISOString().slice(0, 10), "2027-01-01");
+  assert.throws(() => lerCertificadoA1(bytes, "errada"), /senha/);
+});

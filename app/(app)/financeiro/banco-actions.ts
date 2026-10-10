@@ -3,7 +3,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { contexto } from "@/lib/contexto";
 import { lerOFX } from "@/lib/banco/ofx";
-import { conciliar } from "@/lib/banco/conciliar";
+import { conciliarEmpresa, pluggy, sincronizarConexao } from "@/lib/banco/processar";
+import { headers } from "next/headers";
 
 const ir = (q: string) => {
   revalidatePath("/financeiro");
@@ -12,21 +13,9 @@ const ir = (q: string) => {
 const msg = (m: string) => ir("msg=" + encodeURIComponent(m));
 const erro = (m: string) => ir("erro=" + encodeURIComponent(m));
 
-// Concilia todas as movimentações pendentes da empresa contra os lançamentos ainda não realizados
 async function conciliarPendentes(): Promise<number> {
   const ctx = await contexto();
-  const sb = ctx.supabase;
-  const [{ data: movs }, { data: prev }] = await Promise.all([
-    sb.from("extrato").select("id, data, valor, conta_id").eq("empresa_id", ctx.empresa.id).eq("status", "pendente"),
-    sb.from("lancamentos").select("id, data, valor").eq("empresa_id", ctx.empresa.id).eq("realizado", false),
-  ]);
-  const pares = conciliar((movs ?? []).map((m) => ({ ...m, valor: Number(m.valor) })), (prev ?? []).map((p) => ({ ...p, valor: Number(p.valor) })));
-  for (const [movId, lancId] of pares) {
-    const m = movs!.find((x) => x.id === movId)!;
-    await sb.from("lancamentos").update({ realizado: true, data: m.data, conta_id: m.conta_id }).eq("id", lancId);
-    await sb.from("extrato").update({ status: "conciliado", lancamento_id: lancId }).eq("id", movId);
-  }
-  return pares.size;
+  return conciliarEmpresa(ctx.supabase, ctx.empresa.id);
 }
 
 export async function importarOFX(fd: FormData) {
@@ -99,4 +88,52 @@ export async function desfazer(extratoId: string) {
 export async function reconciliar() {
   const n = await conciliarPendentes();
   msg(`${n} movimentações conciliadas automaticamente.`);
+}
+
+// ===== Open Finance (Pluggy) =====
+export async function tokenConexao(itemId?: string): Promise<{ ok: true; token: string } | { ok: false; erro: string }> {
+  const ctx = await contexto();
+  if (!["dono", "gerente", "financeiro"].includes(ctx.papel)) return { ok: false, erro: "Somente dono, gerente ou financeiro conecta contas bancárias." };
+  try {
+    const h = await headers();
+    const origem = h.get("origin") ?? `https://${h.get("host")}`;
+    const segredo = process.env.PLUGGY_WEBHOOK_SECRET;
+    const { accessToken } = await pluggy().createConnectToken(itemId, {
+      clientUserId: ctx.empresa.id,
+      avoidDuplicates: true,
+      ...(segredo && origem.startsWith("https://") ? { webhookUrl: `${origem}/api/pluggy/webhook?s=${segredo}` } : {}),
+    });
+    return { ok: true, token: accessToken };
+  } catch (e) {
+    return { ok: false, erro: (e as Error).message };
+  }
+}
+
+export async function registrarConexao(itemId: string): Promise<{ ok: boolean; erro?: string; resumo?: string }> {
+  const ctx = await contexto();
+  const { data: cx, error } = await ctx.supabase.from("conexoes_bancarias")
+    .upsert({ empresa_id: ctx.empresa.id, item_id: itemId, provedor: "pluggy", criado_por: ctx.userId }, { onConflict: "item_id" })
+    .select("id, empresa_id, item_id").single();
+  if (error || !cx) return { ok: false, erro: error?.message ?? "Não foi possível salvar a conexão." };
+  try {
+    const r = await sincronizarConexao(ctx.supabase, cx);
+    revalidatePath("/financeiro");
+    return { ok: true, resumo: `${r.novas} movimentações trazidas do banco, ${r.conciliadas} conciliadas.` };
+  } catch (e) {
+    return { ok: false, erro: (e as Error).message };
+  }
+}
+
+export async function sincronizarAgora(conexaoId: string) {
+  const ctx = await contexto();
+  const { data: cx } = await ctx.supabase.from("conexoes_bancarias").select("id, empresa_id, item_id").eq("id", conexaoId).single();
+  if (!cx) return erro("Conexão não encontrada.");
+  try {
+    // pede ao banco uma atualização nova (chega depois pelo webhook) e já traz o que está disponível
+    await pluggy().updateItem(cx.item_id).catch(() => null);
+    const r = await sincronizarConexao(ctx.supabase, cx, { desde: new Date(Date.now() - 15 * 864e5).toISOString().slice(0, 10) });
+    msg(`Atualizado: ${r.novas} movimentações novas, ${r.conciliadas} conciliadas.`);
+  } catch (e) {
+    erro((e as Error).message);
+  }
 }
