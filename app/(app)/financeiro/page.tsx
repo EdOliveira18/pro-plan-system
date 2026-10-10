@@ -5,8 +5,10 @@ import { contexto } from "@/lib/contexto";
 import { brl, pct, data } from "@/lib/formato";
 import { periodo, nomeMembro } from "@/lib/periodo";
 import SeletorMes from "@/components/SeletorMes";
+import { importarOFX, vincular, criarDaMovimentacao, ignorar, desfazer, reconciliar } from "./banco-actions";
+import { sugerir } from "@/lib/banco/conciliar";
 
-const ABAS: [string, string][] = [["fluxo", "Fluxo de caixa"], ["contratos", "DRE por contrato"], ["comissoes", "Comissões"], ["fiscal", "Fiscal"]];
+const ABAS: [string, string][] = [["fluxo", "Fluxo de caixa"], ["banco", "Banco e conciliação"], ["contratos", "DRE por contrato"], ["comissoes", "Comissões"], ["fiscal", "Fiscal"]];
 const CATEGORIAS = ["recebimento", "fabrica", "frete", "montagem", "comissao_loja", "comissao_rt", "imposto", "taxa", "aluguel", "salarios", "marketing", "despesa_fixa", "outros"];
 const ir = (aba: string, mes: string, erro?: string) => {
   revalidatePath("/financeiro");
@@ -46,7 +48,7 @@ async function statusNota(mes: string, id: string, status: string) {
   ir("fiscal", mes);
 }
 
-export default async function Financeiro({ searchParams }: { searchParams: Promise<{ aba?: string; mes?: string; erro?: string }> }) {
+export default async function Financeiro({ searchParams }: { searchParams: Promise<{ aba?: string; mes?: string; erro?: string; msg?: string }> }) {
   const sp = await searchParams;
   const aba = sp.aba ?? "fluxo";
   const p = periodo(sp.mes);
@@ -107,6 +109,84 @@ export default async function Financeiro({ searchParams }: { searchParams: Promi
           <label style={{ flexDirection: "row", alignItems: "center", gap: 6 }}><input type="checkbox" name="realizado" /> Já pago / recebido</label>
           <button className="btn primary">Lançar</button>
         </form>
+      </div>
+    </>);
+  }
+
+  if (aba === "banco") {
+    const [{ data: contas }, { data: pend }, { data: conc }, { data: abertos }] = await Promise.all([
+      sb.from("contas_bancarias").select("*").eq("empresa_id", eid).order("created_at"),
+      sb.from("extrato").select("*, conta:contas_bancarias(nome)").eq("empresa_id", eid).eq("status", "pendente").order("data", { ascending: false }).limit(200),
+      sb.from("extrato").select("*, lancamento:lancamentos(descricao, categoria, contrato:contratos(codigo))").eq("empresa_id", eid).eq("status", "conciliado").order("data", { ascending: false }).limit(30),
+      sb.from("lancamentos").select("id, data, valor, descricao, contrato:contratos(codigo)").eq("empresa_id", eid).eq("realizado", false),
+    ]);
+    const A = ((abertos ?? []) as any[]).map((l) => ({ ...l, valor: Number(l.valor) }));
+    corpo = (<>
+      <div className="grid two">
+        <div className="panel">
+          <h2>Importar extrato</h2>
+          <p className="note" style={{ marginTop: -6 }}>No internet banking, procure Extrato e exporte em <b>OFX</b> (às vezes chamado de "Money" ou "Microsoft Money"). Pode importar o mesmo período de novo: o sistema ignora o que já entrou.</p>
+          <form action={importarOFX} className="grid" style={{ gap: 10 }}>
+            <input type="file" name="arquivo" accept=".ofx,.OFX,application/x-ofx" required aria-label="Arquivo OFX" />
+            <input name="nome" placeholder="Nome da conta, só na primeira importação (ex.: Itaú PJ)" aria-label="Nome da conta" />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><button className="btn primary">Importar e conciliar</button></div>
+          </form>
+          <p className="note" style={{ marginBottom: 0 }}>A conciliação casa cada movimentação com o lançamento previsto de mesmo valor, com até 5 dias de diferença na data. Quando casa, o lançamento vira realizado sozinho.</p>
+        </div>
+        <div className="panel">
+          <h2>Contas</h2>
+          {(contas ?? []).map((c: any) => (
+            <div key={c.id} className="row"><span><b>{c.nome}</b><br /><span className="note">Banco {c.banco} · ag. {c.agencia ?? "n/a"} · conta {c.conta} · via {c.origem.toUpperCase()}</span></span>
+              <span style={{ textAlign: "right" }}><span className="num">{c.saldo !== null ? brl(c.saldo) : "n/a"}</span><br /><span className="note">{c.saldo_em ? "saldo em " + data(c.saldo_em) : ""}</span></span></div>
+          ))}
+          {!contas?.length && <p className="note">Nenhuma conta ainda. Ela é criada na primeira importação.</p>}
+          <div className="lock p-info" style={{ marginBottom: 0 }}>Conexão automática pelo Open Finance (Pluggy) está preparada para quando o plano for contratado. As contas e a conciliação continuam as mesmas.</div>
+        </div>
+      </div>
+
+      <div className="panel mt">
+        <h2>Aguardando classificação <span className="pill p-warn">{pend?.length ?? 0}</span>
+          {!!pend?.length && <form action={reconciliar} style={{ marginLeft: "auto" }}><button className="btn sm">Tentar conciliar de novo</button></form>}</h2>
+        {!pend?.length ? <p className="note" style={{ margin: 0 }}>Nada pendente. Tudo o que entrou no banco já está ligado a um lançamento.</p> : (
+          <div className="scroll"><table>
+            <thead><tr><th>Data</th><th>Movimentação</th><th className="r">Valor</th><th>Lançamento parecido</th><th>Ou criar lançamento</th><th></th></tr></thead>
+            <tbody>{(pend as any[]).map((m) => {
+              const sug = sugerir({ id: m.id, data: m.data, valor: Number(m.valor) }, A) as any[];
+              return (
+                <tr key={m.id}>
+                  <td className="num">{data(m.data)}</td>
+                  <td>{m.descricao}<div className="note">{m.conta?.nome}</div></td>
+                  <td className="r num" style={{ color: Number(m.valor) > 0 ? "var(--good)" : "var(--bad)" }}>{brl(m.valor)}</td>
+                  <td>{sug.length ? sug.map((s) => (
+                    <form key={s.id} action={vincular.bind(null, m.id, s.id)} style={{ marginBottom: 4 }}>
+                      <button className="btn sm" title={s.descricao}>{s.contrato ? `#${s.contrato.codigo} · ` : ""}{s.descricao.slice(0, 28)} · {brl(s.valor)} · {data(s.data)}</button>
+                    </form>)) : <span className="note">nenhum</span>}</td>
+                  <td>
+                    <form action={criarDaMovimentacao.bind(null, m.id)} style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                      <select name="categoria" defaultValue={Number(m.valor) > 0 ? "recebimento" : "outros"} aria-label="Categoria">{CATEGORIAS.map((c) => <option key={c}>{c}</option>)}</select>
+                      <select name="contrato_id" defaultValue="" aria-label="Contrato"><option value="">Sem contrato</option>{K.map((k) => <option key={k.id} value={k.id}>#{k.codigo}</option>)}</select>
+                      <button className="btn sm primary">Criar</button>
+                    </form>
+                  </td>
+                  <td><form action={ignorar.bind(null, m.id)}><button className="btn sm">Ignorar</button></form></td>
+                </tr>);
+            })}</tbody>
+          </table></div>
+        )}
+      </div>
+
+      <div className="panel mt">
+        <h2>Conciliadas recentemente</h2>
+        <div className="scroll"><table>
+          <thead><tr><th>Data</th><th>No banco</th><th>No sistema</th><th className="r">Valor</th><th></th></tr></thead>
+          <tbody>{((conc ?? []) as any[]).map((m) => (
+            <tr key={m.id}><td className="num">{data(m.data)}</td><td>{m.descricao}</td>
+              <td>{m.lancamento?.contrato ? <span className="idc">#{m.lancamento.contrato.codigo} </span> : null}{m.lancamento?.descricao} <span className="pill p-neu">{m.lancamento?.categoria}</span></td>
+              <td className="r num">{brl(m.valor)}</td>
+              <td><form action={desfazer.bind(null, m.id)}><button className="btn sm">Desfazer</button></form></td></tr>))}
+            {!conc?.length && <tr><td colSpan={5} className="note">Nenhuma ainda.</td></tr>}
+          </tbody>
+        </table></div>
       </div>
     </>);
   }
@@ -230,6 +310,7 @@ export default async function Financeiro({ searchParams }: { searchParams: Promi
         {(aba === "fluxo" || aba === "comissoes") && <SeletorMes base="/financeiro" mes={p.chave} extra={`&aba=${aba}`} />}
       </div>
       {sp.erro && <div className="erro">{sp.erro}</div>}
+      {sp.msg && <div className="ok">{sp.msg}</div>}
       <div style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--line)", marginBottom: 16, overflowX: "auto" }}>
         {ABAS.map(([a, n]) => <Link key={a} href={`/financeiro?aba=${a}&mes=${p.chave}`} style={{ padding: "9px 14px", fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap", color: aba === a ? "var(--fg)" : "var(--muted)", borderBottom: "2px solid " + (aba === a ? "var(--gold)" : "transparent") }}>{n}</Link>)}
       </div>
