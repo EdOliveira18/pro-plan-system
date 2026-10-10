@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { enviarContabilidade } from "@/lib/contabilidade";
+import { emailConfigurado } from "@/lib/email";
 import { contexto } from "@/lib/contexto";
 import { cnpjValido, consultarCNPJ, formatarCNPJ, limparCNPJ } from "@/lib/cnpj";
 import { lerCertificadoA1 } from "@/lib/certificado";
@@ -62,6 +64,19 @@ async function salvar(fd: FormData) {
     if (e3.error) return ir("erro=" + encodeURIComponent(e3.error.message));
   }
   ir("msg=" + encodeURIComponent("Configurações salvas."));
+}
+
+async function testarContabilidade() {
+  "use server";
+  const ctx = await contexto();
+  let destino: string;
+  try {
+    const r = await enviarContabilidade(ctx.supabase, ctx.empresa.id);
+    destino = "/empresa?msg=" + encodeURIComponent(`E-mail das notas de ${r.rotulo} enviado para ${r.para} (${r.quantidade} nota(s)).`);
+  } catch (e: any) {
+    destino = "/empresa?erro=" + encodeURIComponent(e.message);
+  }
+  redirect(destino);
 }
 
 async function buscarReceita(fd: FormData) {
@@ -216,6 +231,10 @@ export default async function Empresa({ searchParams }: { searchParams: Promise<
               Enviar todo mês, por e-mail, as notas fiscais do <b>mês anterior</b> (XML + DANFE) para a contabilidade
             </label>
             <label style={{ maxWidth: 420, marginTop: 10 }}>E-mail do contador<input type="email" name="email_contabilidade" defaultValue={c.email_contabilidade ?? ""} placeholder="contador@escritorio.com.br" /></label>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 10 }}>
+              <button className="btn sm" formAction={testarContabilidade} formNoValidate disabled={!emailConfigurado()}>Enviar agora o mês anterior</button>
+              <span className="note">{emailConfigurado() ? "O envio automático acontece todo dia 1º às 8h. Salve o e-mail do contador antes de testar." : "Envio de e-mail ainda não ativado no servidor (falta a chave do Resend)."}</span>
+            </div>
           </Secao>
 
           {gestor && <div style={{ textAlign: "center", marginTop: 22 }}><button className="btn primary" style={{ padding: "12px 36px", fontSize: 15 }}>Salvar configurações</button></div>}

@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { contexto } from "@/lib/contexto";
 import { brl, data } from "@/lib/formato";
+import Confirmar from "@/components/Confirmar";
 
 async function novoOrcamento(fd: FormData) {
   "use server";
@@ -25,6 +26,7 @@ async function novoOrcamento(fd: FormData) {
   const { data: o, error } = await sb.from("orcamentos").insert({
     empresa_id: ctx.empresa.id, cliente_id: clienteId, nome_projeto: String(fd.get("nome_projeto")),
     vendedor_id: ctx.userId, parceiro_id: parceiroId, rt_pct: rt, forma_pagamento: "cartao", parcelas: 10,
+    data_entrega: String(fd.get("data_entrega") || "") || null,
   }).select("id").single();
   if (error) redirect("/comercial?erro=" + encodeURIComponent(error.message));
   redirect(`/comercial/${o!.id}`);
@@ -53,53 +55,89 @@ async function salvarConfig(fd: FormData) {
   revalidatePath("/comercial");
 }
 
-const STATUS: Record<string, [string, string]> = { rascunho: ["Rascunho", "p-neu"], apresentado: ["Apresentado", "p-info"], fechado: ["Contrato gerado", "p-good"], perdido: ["Perdido", "p-bad"] };
+async function moverOrcamento(id: string, status: "excluido" | "rascunho" | "perdido") {
+  "use server";
+  const ctx = await contexto();
+  const { error } = await ctx.supabase.from("orcamentos").update({ status, updated_at: new Date().toISOString() }).eq("id", id).eq("empresa_id", ctx.empresa.id).neq("status", "fechado");
+  if (error) redirect("/comercial?erro=" + encodeURIComponent(error.message));
+  revalidatePath("/comercial");
+}
 
-export default async function Comercial({ searchParams }: { searchParams: Promise<{ erro?: string; cliente?: string }> }) {
+const STATUS: Record<string, [string, string]> = { rascunho: ["Em elaboração", "p-neu"], apresentado: ["Apresentado", "p-info"], fechado: ["Faturado (contrato)", "p-good"], perdido: ["Perdido", "p-bad"], excluido: ["Excluído", "p-neu"] };
+const ABAS: [string, string, string[]][] = [["abertos", "Orçamentos", ["rascunho", "apresentado"]], ["faturados", "Faturados", ["fechado"]], ["perdidos", "Perdidos", ["perdido"]], ["excluidos", "Excluídos", ["excluido"]]];
+
+export default async function Comercial({ searchParams }: { searchParams: Promise<{ erro?: string; cliente?: string; aba?: string; q?: string }> }) {
   const sp = await searchParams;
   const ctx = await contexto();
   const eid = ctx.empresa.id;
-  const [{ data: orcs }, { data: clientes }, { data: parceiros }, { data: campanhas }, { data: cfg }] = await Promise.all([
-    ctx.supabase.from("orcamentos").select("id, nome_projeto, status, created_at, calculo, cliente:clientes(nome)").eq("empresa_id", eid).order("created_at", { ascending: false }).limit(100),
+  const aba = ABAS.find((a) => a[0] === sp.aba) ?? ABAS[0];
+  const [{ data: todos }, { data: clientes }, { data: parceiros }, { data: campanhas }, { data: cfg }] = await Promise.all([
+    ctx.supabase.from("orcamentos").select("id, numero, nome_projeto, status, created_at, data_entrega, calculo, cliente:clientes(nome), contratos(id, codigo)").eq("empresa_id", eid).order("numero", { ascending: false }).limit(1000),
     ctx.supabase.from("clientes").select("id, nome").eq("empresa_id", eid).order("nome"),
     ctx.supabase.from("parceiros").select("id, nome, tipo, rt_pct").eq("empresa_id", eid).order("nome"),
     ctx.supabase.from("campanhas").select("id, nome, canal, investimento").eq("empresa_id", eid).order("nome"),
     ctx.supabase.from("configuracoes").select("*").eq("empresa_id", eid).single(),
   ]);
   const gestor = ["dono", "gerente"].includes(ctx.papel);
+  const valor = (o: any) => Number(o.calculo?.valorProposta ?? 0);
+  const pend = ((todos ?? []) as any[]).filter((o) => ["rascunho", "apresentado"].includes(o.status));
+  const totalPend = pend.reduce((a, o) => a + valor(o), 0);
+  const comValor = pend.filter((o) => valor(o) > 0);
+  const termo = (sp.q ?? "").toLowerCase().trim();
+  const orcs = ((todos ?? []) as any[]).filter((o) => aba[2].includes(o.status) &&
+    (!termo || [o.nome_projeto, o.cliente?.nome, String(o.numero)].some((x) => String(x ?? "").toLowerCase().includes(termo))));
+  const link = (a: string) => `/comercial?aba=${a}${sp.q ? "&q=" + encodeURIComponent(sp.q) : ""}`;
   return (
     <>
-      <div className="head"><div><h1>Comercial</h1><p className="sub">Orçamentos com olhinho, importação Promob e geração de contrato</p></div></div>
+      <div className="head"><div><h1>Lista de Orçamentos</h1><p className="sub">Orçamentos com olhinho, importação Promob e geração de contrato</p></div>
+        <a className="btn primary" href="#novo">Cadastrar</a></div>
       {sp.erro && <div className="erro">{sp.erro}</div>}
+      <div className="grid k3" style={{ marginBottom: 16 }}>
+        <div className="panel kpi kcard"><span className="tg p-warn">Pendentes</span><div className="v">{pend.length}</div><div className="l">Orçamentos pendentes</div></div>
+        <div className="panel kpi kcard"><span className="tg p-warn">Em aberto</span><div className="v">{brl(totalPend)}</div><div className="l">Valor total pendente</div></div>
+        <div className="panel kpi kcard"><span className="tg p-info">Média</span><div className="v">{brl(comValor.length ? totalPend / comValor.length : 0)}</div><div className="l">Ticket médio dos pendentes</div></div>
+      </div>
+      <nav className="abas" aria-label="Situação">
+        {ABAS.map(([k, n, st]) => <Link key={k} href={link(k)} aria-current={aba[0] === k ? "page" : undefined}>{n} <span className="note">({((todos ?? []) as any[]).filter((o) => st.includes(o.status)).length})</span></Link>)}
+      </nav>
       <div className="grid two">
-        <div className="panel">
-          <h2>Orçamentos</h2>
-          <div className="scroll"><table>
-            <thead><tr><th>Projeto</th><th>Cliente</th><th className="r">Proposta</th><th className="r">Margem</th><th>Situação</th><th>Criado</th></tr></thead>
+        <div className="panel" style={{ padding: 0 }}>
+          <form className="cad-busca"><input type="hidden" name="aba" value={aba[0]} /><input name="q" defaultValue={sp.q ?? ""} placeholder="Buscar orçamento, cliente ou número" style={{ flex: 1 }} aria-label="Buscar" /><button className="btn">Filtrar</button></form>
+          <div className="scroll"><table className="cad-tab">
+            <thead><tr><th>Nº</th><th>Cliente / projeto</th><th>Data início</th><th>Entrega</th><th className="r">Valor total</th><th>Status</th><th className="r">Ações</th></tr></thead>
             <tbody>
-              {(orcs ?? []).map((o: any) => (
+              {orcs.map((o: any) => (
                 <tr key={o.id}>
-                  <td><Link href={`/comercial/${o.id}`}><b>{o.nome_projeto}</b></Link></td>
-                  <td>{o.cliente?.nome}</td>
-                  <td className="r num">{o.calculo ? brl(o.calculo.valorProposta) : "n/a"}</td>
-                  <td className="r num">{o.calculo ? (o.calculo.margem * 100).toFixed(1).replace(".", ",") + "%" : "n/a"}</td>
-                  <td><span className={"pill " + STATUS[o.status][1]}>{STATUS[o.status][0]}</span></td>
+                  <td className="num"><Link href={`/comercial/${o.id}`}><b>{o.numero}</b></Link></td>
+                  <td><b>{o.cliente?.nome}</b><div className="note">{o.nome_projeto}</div></td>
                   <td className="num note">{data(o.created_at)}</td>
+                  <td className="num note">{o.data_entrega ? data(o.data_entrega) : "n/a"}</td>
+                  <td className="r num">{o.calculo ? brl(valor(o)) : "n/a"}</td>
+                  <td><span className={"pill " + STATUS[o.status][1]}>{STATUS[o.status][0]}</span>{o.contratos?.[0] && <div><Link className="idc" href={`/contratos/${o.contratos[0].id}`}>#{o.contratos[0].codigo}</Link></div>}</td>
+                  <td className="r" style={{ whiteSpace: "nowrap" }}>
+                    <Link className="btn sm" href={`/comercial/${o.id}`}>Abrir</Link>{" "}
+                    {["rascunho", "apresentado"].includes(o.status) && <form action={moverOrcamento.bind(null, o.id, "perdido")} style={{ display: "inline" }}><Confirmar className="btn sm" texto="Marcar este orçamento como perdido?">Perdido</Confirmar></form>}{" "}
+                    {o.status !== "fechado" && o.status !== "excluido" && <form action={moverOrcamento.bind(null, o.id, "excluido")} style={{ display: "inline" }}><Confirmar className="btn sm" texto="Mover este orçamento para Excluídos?">Excluir</Confirmar></form>}
+                    {["excluido", "perdido"].includes(o.status) && <form action={moverOrcamento.bind(null, o.id, "rascunho")} style={{ display: "inline" }}><button className="btn sm">Reabrir</button></form>}
+                  </td>
                 </tr>
               ))}
-              {!orcs?.length && <tr><td colSpan={6} className="note">Nenhum orçamento ainda.</td></tr>}
             </tbody>
           </table></div>
+          {!orcs.length && <div className="vazio"><b>Nenhum orçamento encontrado.</b></div>}
+          <div className="cad-rod note">Mostrando {orcs.length} registro(s)</div>
         </div>
-        <div className="panel">
+        <div className="panel" id="novo">
           <h2>Novo orçamento</h2>
           <form action={novoOrcamento} className="grid" style={{ gap: 12 }}>
             <label>Cliente<select name="cliente_id" defaultValue={sp.cliente ?? ""}><option value="">Novo cliente (digite abaixo)</option>{(clientes ?? []).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}</select></label>
             <label>Nome do novo cliente<input name="novo_cliente" placeholder="Só se não escolheu acima" /></label>
             <label>Nome do projeto<input name="nome_projeto" required placeholder="Ex.: Apartamento Jardins" /></label>
-            <label>Parceiro (arquiteto / RT)<select name="parceiro_id" defaultValue=""><option value="">Sem parceiro</option>{(parceiros ?? []).map((p) => <option key={p.id} value={p.id}>{p.nome} ({String(p.rt_pct).replace(".", ",")}%)</option>)}</select></label>
+            <label>Arquiteto / parceiro (RT)<select name="parceiro_id" defaultValue=""><option value="">Sem parceiro</option>{(parceiros ?? []).map((p) => <option key={p.id} value={p.id}>{p.nome} ({String(p.rt_pct).replace(".", ",")}%)</option>)}</select></label>
+            <label>Previsão de entrega<input type="date" name="data_entrega" /></label>
             <button className="btn primary">Criar e abrir</button>
           </form>
+          <p className="note">Arquitetos completos (CAU, dados bancários, Pix) ficam em <Link href="/cadastros/arquitetos">Cadastros › Arquitetos</Link>.</p>
         </div>
       </div>
 

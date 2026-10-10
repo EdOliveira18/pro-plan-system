@@ -107,3 +107,36 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
   .kpis,.k3{grid-template-columns:repeat(2,minmax(0,1fr))}
   .form{grid-template-columns:1fr}
 }
+/* Cadastros */
+.migalha{font-size:12.5px;color:var(--muted);margin-bottom:8px}.migalha a{color:var(--muted);text-decoration:none}.migalha a:hover{color:var(--accent)}
+.cad{padding:0;overflow:hidden}
+.cad section{padding:0 0 18px}
+.cad-h1{padding:16px 22px;margin:0 0 4px;border-bottom:1px solid var(--line);font-size:18px}
+.cad-sec{margin:6px 0 14px;padding:12px 22px;background:var(--bg);border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:12.5px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;position:relative}
+.cad-sec::before{content:"";position:absolute;left:12px;top:10px;bottom:10px;width:3px;border-radius:3px;background:var(--accent)}
+.cad-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px 18px;padding:12px 22px 0}
+.cad-grid label>span{font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;color:var(--fg)}
+.cad-grid .cad-area{grid-column:span 2}
+.obr{color:var(--bad);font-style:normal;margin-left:2px}
+.cad-acoes{display:flex;justify-content:center;gap:8px;padding:18px;border-top:1px solid var(--line)}
+.cad-busca{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;padding:16px 18px;border-bottom:1px solid var(--line)}
+.cad-busca form{display:flex;gap:8px;flex:1;flex-wrap:wrap}
+.cad-busca form input{flex:1;min-width:220px;max-width:560px}
+.cad-imp{position:relative}.cad-imp summary{list-style:none}.cad-imp>.panel{position:absolute;right:0;top:40px;z-index:5;width:360px;box-shadow:0 8px 24px rgba(0,0,0,.12)}
+.cad-tab td,.cad-tab th{padding-left:18px}
+.vazio{text-align:center;padding:34px 16px;display:flex;flex-direction:column;align-items:center;gap:6px}
+.vazio .vz-ic{width:46px;height:30px;border-radius:99px;background:var(--sunk);display:grid;place-items:center;color:var(--muted)}
+.vazio b{font-size:16px}.vazio p{margin:0 0 8px;color:var(--muted)}
+.cad-rod{padding:12px 18px;border-top:1px solid var(--line)}
+nav.menu details>summary{list-style:none;padding:9px 12px;border-radius:9px;display:flex;align-items:center;gap:12px;font-size:14px;color:#B9C0CE;cursor:pointer}
+nav.menu details>summary::-webkit-details-marker{display:none}
+nav.menu details>summary:hover{background:#232A3B;color:#E4E8EF}
+nav.menu details>summary svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+nav.menu details>summary .seta{margin-left:auto;width:14px;height:14px;transition:transform .15s}
+nav.menu details[open]>summary .seta{transform:rotate(90deg)}
+nav.menu a.sub{padding:7px 12px 7px 42px;font-size:13.5px}
+.kcard{display:flex;flex-direction:column;gap:4px}.kcard .tg{align-self:flex-end;font-size:11px;font-weight:600;padding:1px 8px;border-radius:6px}
+.abas{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px}.abas a{padding:7px 14px;border-radius:8px;text-decoration:none;color:var(--muted);font-weight:600;font-size:13px;border:1px solid transparent}
+.abas a[aria-current="page"]{background:var(--surface);color:var(--accent);border-color:var(--line)}
+@media (max-width:900px){.cad-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.cad-grid{grid-template-columns:minmax(0,1fr)}.cad-grid label,.cad-grid .cad-area{grid-column:auto!important}}

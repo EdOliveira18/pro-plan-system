@@ -1,6 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { contexto } from "@/lib/contexto";
+import { enviarEmail, emailConfigurado, moldura, esc } from "@/lib/email";
 import { data } from "@/lib/formato";
 
 const PAPEIS: [string, string, string][] = [
@@ -23,7 +24,18 @@ async function convidar(fd: FormData) {
   });
   if (error) ir(error.code === "23505" ? "Esse e-mail já foi convidado." : "Somente dono ou gerente cadastra usuários.");
   revalidatePath("/equipe");
-  ir(`Usuário cadastrado. Peça para ${email} criar a conta com esse e-mail; ele entra direto na equipe.`, "msg");
+  let aviso = `Peça para ${email} criar a conta com esse e-mail; ele entra direto na equipe.`;
+  if (emailConfigurado()) {
+    const site = process.env.APP_URL || "https://pro-plan-system.vercel.app";
+    try {
+      await enviarEmail({ para: email, assunto: `Convite para a equipe ${ctx.empresa.nome} no Pro Plan System`,
+        html: moldura("Você foi convidado", `<p>Olá, ${esc(fd.get("nome"))}! Você foi adicionado à equipe de <b>${esc(ctx.empresa.nome)}</b> no Pro Plan System.</p>
+          <p>Para entrar, crie sua conta usando este mesmo e-mail (${esc(email)}):</p>
+          <p><a href="${site}/login" style="background:#1F5E57;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;display:inline-block">Criar minha conta</a></p>`) });
+      aviso = `Convite enviado por e-mail para ${email}.`;
+    } catch { aviso += " (O e-mail de convite não pôde ser enviado; avise a pessoa.)"; }
+  }
+  ir(`Usuário cadastrado. ${aviso}`, "msg");
 }
 
 async function mudarPapel(userId: string, fd: FormData) {
