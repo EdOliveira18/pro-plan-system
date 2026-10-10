@@ -2,16 +2,25 @@ import Link from "next/link";
 import { contexto } from "@/lib/contexto";
 import { brl, data } from "@/lib/formato";
 import { importarXML, gerarPedidoDaNota, marcarNota } from "../acoes";
+import Paginacao, { pagina } from "@/components/Paginacao";
+import { limparTermo } from "@/lib/busca";
 
 const ABAS: [string, string][] = [["", "Todas"], ["pendente", "Pendentes"], ["gerada", "Geradas"], ["outra", "Outras"]];
 
-export default async function NotasCompra({ searchParams }: { searchParams: Promise<{ s?: string; q?: string; erro?: string; msg?: string }> }) {
+export default async function NotasCompra({ searchParams }: { searchParams: Promise<{ s?: string; q?: string; erro?: string; msg?: string; pag?: string }> }) {
   const sp = await searchParams;
   const ctx = await contexto();
-  const { data: rows } = await ctx.supabase.from("notas_compra").select("id, chave, numero, serie, emitente_nome, emitente_cnpj, emissao, valor, status, pedido_id, itens").eq("empresa_id", ctx.empresa.id).order("emissao", { ascending: false }).limit(1000);
-  const todas = (rows ?? []) as any[];
-  const t = (sp.q ?? "").toLowerCase().trim();
-  const lista = todas.filter((n) => (!sp.s || n.status === sp.s) && (!t || [n.numero, n.emitente_nome, n.chave].some((x) => String(x ?? "").toLowerCase().includes(t))));
+  const pg = pagina(sp.pag);
+  const eid = ctx.empresa.id;
+  const st = ["pendente", "gerada", "outra"].includes(sp.s ?? "") ? sp.s! : "";
+  let q = ctx.supabase.from("notas_compra").select("id, chave, numero, serie, emitente_nome, emitente_cnpj, emissao, valor, status, pedido_id, itens", { count: "exact" }).eq("empresa_id", eid);
+  if (st) q = q.eq("status", st);
+  const t = limparTermo(sp.q);
+  if (t) q = q.or(`numero.ilike.%${t}%,emitente_nome.ilike.%${t}%,chave.ilike.%${t}%`);
+  const conta = (s: string) => { let c = ctx.supabase.from("notas_compra").select("id", { count: "exact", head: true }).eq("empresa_id", eid); if (s) c = c.eq("status", s); return c; };
+  const [{ data: rows, count }, ...contagens] = await Promise.all([q.order("emissao", { ascending: false }).order("id").range(pg.de, pg.ate), ...ABAS.map(([k]) => conta(k))]);
+  const lista = (rows ?? []) as any[];
+  const qtdAba = Object.fromEntries(ABAS.map(([k], i) => [k, contagens[i].count ?? 0]));
   return (<>
     <div className="head"><div><nav className="migalha">Almoxarifado › Notas de compra</nav><h1>Notas Fiscais de Compra</h1><p className="sub">Importe o XML que o fornecedor envia e transforme em pedido de compra com um clique</p></div></div>
     {sp.erro && <div className="erro">{sp.erro}</div>}
@@ -23,7 +32,7 @@ export default async function NotasCompra({ searchParams }: { searchParams: Prom
     </form>
     <div className="panel" style={{ padding: 0 }}>
       <div className="cad-busca">
-        <nav className="abas" style={{ margin: 0 }}>{ABAS.map(([k, n]) => <Link key={k} href={`/almoxarifado/notas-compra${k ? "?s=" + k : ""}`} aria-current={(sp.s ?? "") === k ? "page" : undefined}>{n} <span className="note">{todas.filter((x) => !k || x.status === k).length}</span></Link>)}</nav>
+        <nav className="abas" style={{ margin: 0 }}>{ABAS.map(([k, n]) => <Link key={k} href={`/almoxarifado/notas-compra${k ? "?s=" + k : ""}`} aria-current={(sp.s ?? "") === k ? "page" : undefined}>{n} <span className="note">{qtdAba[k]}</span></Link>)}</nav>
         <form style={{ flex: 1 }}>{sp.s && <input type="hidden" name="s" value={sp.s} />}<input name="q" defaultValue={sp.q ?? ""} placeholder="Buscar por número, fornecedor ou chave" aria-label="Buscar" style={{ width: "100%" }} /></form>
       </div>
       <div className="scroll"><table className="cad-tab">
@@ -45,7 +54,7 @@ export default async function NotasCompra({ searchParams }: { searchParams: Prom
           </tr>))}</tbody>
       </table></div>
       {!lista.length && <div className="vazio"><b>Nenhuma nota fiscal encontrada.</b></div>}
-      <div className="cad-rod note">Mostrando {lista.length} registro(s)</div>
+      <Paginacao total={count ?? 0} pag={pg.pag} base="/almoxarifado/notas-compra" params={sp} />
     </div>
   </>);
 }

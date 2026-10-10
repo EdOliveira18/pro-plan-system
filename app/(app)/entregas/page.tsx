@@ -3,13 +3,15 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { contexto } from "@/lib/contexto";
 import { brl, data } from "@/lib/formato";
+import Paginacao, { pagina } from "@/components/Paginacao";
+import { idsContratos, limparTermo } from "@/lib/busca";
 
 async function incluirContratos() {
   "use server";
   const ctx = await contexto();
   const eid = ctx.empresa.id;
   const [{ data: ks }, { data: ents }, { data: st }] = await Promise.all([
-    ctx.supabase.from("contratos").select("id, marcos(tipo, previsto_em)").eq("empresa_id", eid),
+    ctx.supabase.from("contratos").select("id, marcos(tipo, previsto_em)").eq("empresa_id", eid).order("created_at", { ascending: false }).limit(1000),
     ctx.supabase.from("entregas").select("contrato_id").eq("empresa_id", eid),
     ctx.supabase.from("status_entrega").select("id").eq("empresa_id", eid).order("ordem").limit(1),
   ]);
@@ -32,28 +34,33 @@ async function atualizar(id: string, fd: FormData) {
   revalidatePath("/entregas");
 }
 
-export default async function Entregas({ searchParams }: { searchParams: Promise<{ q?: string; s?: string; msg?: string }> }) {
+export default async function Entregas({ searchParams }: { searchParams: Promise<{ q?: string; s?: string; msg?: string; pag?: string }> }) {
   const sp = await searchParams;
   const ctx = await contexto();
   const eid = ctx.empresa.id;
-  const [{ data: rows }, { data: sts }, { data: transp }] = await Promise.all([
-    ctx.supabase.from("entregas").select("*, status:status_entrega(id, nome, cor, final), contrato:contratos(id, codigo, valor_total, orcamento:orcamentos(numero), cliente:clientes(nome))").eq("empresa_id", eid).order("data_entrega", { ascending: true, nullsFirst: false }),
+  const pg = pagina(sp.pag);
+  let q = ctx.supabase.from("entregas").select("*, status:status_entrega(id, nome, cor, final), contrato:contratos(id, codigo, orcamento:orcamentos(numero), cliente:clientes(nome))", { count: "exact" }).eq("empresa_id", eid);
+  if (sp.s && /^[0-9a-f-]{36}$/i.test(sp.s)) q = q.eq("status_id", sp.s);
+  const t = limparTermo(sp.q);
+  if (t) { const ks = await idsContratos(ctx.supabase, eid, t); q = ks.length ? q.in("contrato_id", ks) : q.is("id", null); }
+  const [{ data: rows, count }, { data: res }, { data: sts }, { data: transp }] = await Promise.all([
+    q.order("data_entrega", { ascending: true, nullsFirst: false }).order("id").range(pg.de, pg.ate),
+    ctx.supabase.rpc("resumo_entregas", { p_empresa: eid }),
     ctx.supabase.from("status_entrega").select("id, nome, cor, final, ordem").eq("empresa_id", eid).order("ordem"),
     ctx.supabase.from("pessoas").select("id, nome, nome_fantasia").eq("empresa_id", eid).eq("categoria", "transportadora").order("nome"),
   ]);
-  const todas = (rows ?? []) as any[];
-  const t = (sp.q ?? "").toLowerCase().trim();
-  const lista = todas.filter((e) => (!sp.s || e.status_id === sp.s) && (!t || [e.contrato?.cliente?.nome, e.contrato?.codigo, String(e.contrato?.orcamento?.numero ?? "")].some((x) => String(x ?? "").toLowerCase().includes(t))));
-  const entregues = todas.filter((e) => e.status?.final);
+  const lista = (rows ?? []) as any[];
+  const R = (res ?? {}) as any;
+  const total = Number(R.total ?? 0), entregues = Number(R.entregues ?? 0);
   return (<>
     <div className="head"><div><h1>Lista de Entregas</h1><p className="sub">Acompanhe cada contrato da fábrica até a casa do cliente</p></div>
       <div style={{ display: "flex", gap: 8 }}><Link className="btn" href="/cadastros/status-entrega">Status</Link><form action={incluirContratos}><button className="btn primary">Incluir contratos</button></form></div></div>
     {sp.msg && <div className="ok">{sp.msg}</div>}
     <div className="grid kpis" style={{ marginBottom: 16 }}>
-      <div className="panel kpi kcard"><span className="tg p-info">Total</span><div className="v">{todas.length}</div><div className="l">Total</div></div>
-      <div className="panel kpi kcard"><span className="tg p-good">Entregues</span><div className="v">{entregues.length}</div><div className="l">Entregues</div></div>
-      <div className="panel kpi kcard"><span className="tg p-warn">Pendentes</span><div className="v">{todas.length - entregues.length}</div><div className="l">Pendentes</div></div>
-      <div className="panel kpi kcard"><span className="tg p-info">Faturado</span><div className="v">{brl(todas.reduce((a, e) => a + Number(e.contrato?.valor_total ?? 0), 0))}</div><div className="l">Valor total</div></div>
+      <div className="panel kpi kcard"><span className="tg p-info">Total</span><div className="v">{total}</div><div className="l">Total</div></div>
+      <div className="panel kpi kcard"><span className="tg p-good">Entregues</span><div className="v">{entregues}</div><div className="l">Entregues</div></div>
+      <div className="panel kpi kcard"><span className="tg p-warn">Pendentes</span><div className="v">{total - entregues}</div><div className="l">Pendentes</div></div>
+      {ctx.papel !== "montador" && <div className="panel kpi kcard"><span className="tg p-info">Faturado</span><div className="v">{brl(Number(R.valor ?? 0))}</div><div className="l">Valor total</div></div>}
     </div>
     <div className="panel" style={{ padding: 0 }}>
       <form className="cad-busca"><input name="q" defaultValue={sp.q ?? ""} placeholder="Buscar por nome do cliente ou nº do contrato" style={{ flex: 1 }} aria-label="Buscar" />
@@ -79,7 +86,7 @@ export default async function Entregas({ searchParams }: { searchParams: Promise
           </tr>))}</tbody>
       </table></div>
       {!lista.length && <div className="vazio"><b>Nenhuma entrega encontrada.</b><p>Clique em Incluir contratos para trazer os contratos vendidos com as datas do Radar de Prazos.</p></div>}
-      <div className="cad-rod note">Mostrando {lista.length} registro(s)</div>
+      <Paginacao total={count ?? 0} pag={pg.pag} base="/entregas" params={sp} />
     </div>
   </>);
 }

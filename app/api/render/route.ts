@@ -11,17 +11,34 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return NextResponse.json({ erro: "Faça login." }, { status: 401 });
 
-  const { renderId } = await req.json();
+  const { renderId, novamente } = await req.json();
   const { data: r } = await sb.from("renders").select("*, origem:arquivos!renders_origem_arquivo_id_fkey(storage_path, mime)").eq("id", renderId).single();
   if (!r) return NextResponse.json({ erro: "Render não encontrado." }, { status: 404 });
 
+  let reservado = false;
   const falhar = async (erro: string, status = 500) => {
     await sb.from("renders").update({ status: "erro", erro }).eq("id", renderId);
+    if (reservado) await sb.rpc("devolver_render", { p_render: renderId }); // falha não consome cota
     return NextResponse.json({ erro }, { status });
   };
 
+  // cada render custa crédito de IA: não reprocessa o que já está pronto ou em andamento
+  if (r.status === "concluido" && !novamente) return NextResponse.json({ ok: true });
+  if (r.status === "processando" && Date.now() - new Date(r.created_at).getTime() < 5 * 60_000)
+    return NextResponse.json({ erro: "Este render já está sendo gerado. Aguarde." }, { status: 409 });
+
   const chave = process.env.OPENAI_API_KEY;
   if (!chave) return falhar("A chave da IA de imagem (OPENAI_API_KEY) não está configurada no servidor.", 503);
+
+  // plano ativo e cota do mês: a reserva fica num registro que o usuário não consegue apagar
+  const cota = await sb.rpc("consumir_render", { p_render: renderId });
+  if (cota.error) {
+    const m = cota.error.message;
+    if (/PLANO_INATIVO/.test(m)) return falhar("O plano da empresa está vencido ou suspenso. Regularize a assinatura para gerar renders.", 402);
+    if (/COTA_ESGOTADA/.test(m)) return falhar(`A cota de renders deste mês acabou (${m.split(":")[1]?.trim() ?? ""}). Ela renova no dia 1º; para aumentar, fale com o suporte.`, 429);
+    return falhar("Sem permissão para gerar este render.", 403);
+  }
+  reservado = true;
 
   await sb.from("renders").update({ status: "processando", erro: null }).eq("id", renderId);
 

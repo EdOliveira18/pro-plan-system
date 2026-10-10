@@ -1,16 +1,26 @@
 import Link from "next/link";
 import { contexto } from "@/lib/contexto";
 import { brl, data } from "@/lib/formato";
+import Paginacao, { pagina } from "@/components/Paginacao";
+import { idsContratos, juntarOr, limparTermo } from "@/lib/busca";
 
 const ST: Record<string, [string, string]> = { aberto: ["Em aberto", "p-warn"], finalizado: ["Finalizado", "p-good"], cancelado: ["Cancelado", "p-neu"] };
 
-export default async function ListaPedidos({ tipo, q }: { tipo: "compra" | "saida"; q?: string }) {
+export default async function ListaPedidos({ tipo, q, pag }: { tipo: "compra" | "saida"; q?: string; pag?: string }) {
   const ctx = await contexto();
-  const { data: rows } = await ctx.supabase.from("pedidos_estoque")
-    .select("id, numero, data, documento, status, valor_total, tipo_saida, finalizado_em, fornecedor:pessoas(nome, nome_fantasia), contrato:contratos(codigo, cliente:clientes(nome)), pedido_itens(quantidade, valor_unit)")
-    .eq("empresa_id", ctx.empresa.id).eq("tipo", tipo).order("numero", { ascending: false }).limit(500);
-  const t = (q ?? "").toLowerCase().trim();
-  const lista = ((rows ?? []) as any[]).filter((p) => !t || [String(p.numero), p.documento, p.fornecedor?.nome, p.fornecedor?.nome_fantasia, p.contrato?.codigo, p.contrato?.cliente?.nome].some((x) => String(x ?? "").toLowerCase().includes(t)));
+  const pg = pagina(pag);
+  let qq = ctx.supabase.from("pedidos_estoque")
+    .select("id, numero, data, documento, status, valor_total, tipo_saida, finalizado_em, fornecedor:pessoas(nome, nome_fantasia), contrato:contratos(codigo, cliente:clientes(nome)), pedido_itens(quantidade, valor_unit)", { count: "exact" })
+    .eq("empresa_id", ctx.empresa.id).eq("tipo", tipo);
+  const t = limparTermo(q);
+  if (t) {
+    const ks = await idsContratos(ctx.supabase, ctx.empresa.id, t);
+    const { data: fs } = await ctx.supabase.from("pessoas").select("id").eq("empresa_id", ctx.empresa.id).or(`nome.ilike.%${t}%,nome_fantasia.ilike.%${t}%`).limit(300);
+    const fids = (fs ?? []).map((f: any) => f.id);
+    qq = qq.or(juntarOr([/^\d{1,9}$/.test(t) && `numero.eq.${t}`, `documento.ilike.%${t}%`, ks.length && `contrato_id.in.(${ks.join(",")})`, fids.length && `fornecedor_id.in.(${fids.join(",")})`]));
+  }
+  const { data: rows, count } = await qq.order("numero", { ascending: false }).range(pg.de, pg.ate);
+  const lista = (rows ?? []) as any[];
   const valor = (p: any) => (p.status === "finalizado" ? Number(p.valor_total) : (p.pedido_itens ?? []).reduce((a: number, i: any) => a + Number(i.quantidade) * Number(i.valor_unit), 0));
   return (
     <div className="panel" style={{ padding: 0 }}>
@@ -29,7 +39,7 @@ export default async function ListaPedidos({ tipo, q }: { tipo: "compra" | "said
           </tr>))}</tbody>
       </table></div>
       {!lista.length && <div className="vazio"><b>Nenhum pedido cadastrado.</b></div>}
-      <div className="cad-rod note">Mostrando {lista.length} registro(s)</div>
+      <Paginacao total={count ?? 0} pag={pg.pag} base={tipo === "compra" ? "/almoxarifado/compras" : "/almoxarifado/saidas"} params={{ q }} />
     </div>
   );
 }

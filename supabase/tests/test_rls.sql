@@ -35,8 +35,9 @@ do $$ begin
   end;
 end $$;
 
--- Ana: trava de pontuação com desconto alto
+-- Ana: trava de pontuação com desconto alto (cliente com CPF e endereço, exigidos para faturar)
 set request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000a';
+update clientes set cpf_cnpj = '123.456.789-09', logradouro = 'Rua A', numero = '10', cidade = 'São Paulo', uf = 'SP';
 update orcamentos set desconto_pct = 20 where id = :'orc_a';  -- 3,00 * 0,8 = 2,40 < 2,6
 do $$ declare ok boolean := false; begin
   begin
@@ -54,7 +55,8 @@ select codigo, numero, ano, marco_atual from contratos order by numero;
 do $$ begin
   if (select string_agg(numero::text, ',' order by numero) from contratos) <> '1,2' then raise exception 'FALHA: numeração'; end if;
   if (select count(*) from marcos) <> 12 then raise exception 'FALHA: marcos não criados'; end if;
-  if (select count(*) from lancamentos where categoria='recebimento') <> 11 then raise exception 'FALHA: parcelas'; end if;
+  -- cartão agrupado (padrão): 1 lançamento por contrato
+  if (select count(*) from lancamentos where categoria='recebimento') <> 2 then raise exception 'FALHA: parcelas'; end if;
 end $$;
 
 -- Radar: concluir marco avança para liberação

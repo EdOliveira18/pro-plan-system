@@ -155,3 +155,18 @@ test("lê XML de NF-e de compra com dois itens", () => {
   assert.equal(n.itens[0].quantidade, 10);
   assert.equal(n.emissao, "2026-10-05");
 });
+
+test("NF-e sem chave no XML ganha chave de emitente, série e número", () => {
+  const xml = `<NFe><infNFe><ide><serie>2</serie><nNF>77</nNF></ide><emit><CNPJ>12345678000199</CNPJ><xNome>X</xNome></emit><total><ICMSTot><vNF>10</vNF></ICMSTot></total></infNFe></NFe>`;
+  assert.equal(lerNFe(xml).chave, "SEM-CHAVE-12345678000199-2-77");
+});
+
+import { hojeISO, somaDias, mesAtual } from "../lib/tempo.ts";
+test("datas seguem Brasília: 23h30 de Brasília ainda é o mesmo dia, mesmo já sendo amanhã em UTC", () => {
+  assert.equal(hojeISO(new Date("2026-10-11T02:30:00Z")), "2026-10-10");
+  assert.equal(hojeISO(new Date("2026-10-11T03:30:00Z")), "2026-10-11");
+  assert.equal(somaDias("2026-01-31", 1), "2026-02-01");
+  assert.equal(somaDias("2026-03-01", -1), "2026-02-28");
+  const m = mesAtual();
+  assert.ok(m.de.endsWith("-01") && m.ate >= m.de);
+});

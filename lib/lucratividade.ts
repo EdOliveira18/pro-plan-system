@@ -1,3 +1,4 @@
+import { inicioMesesAtras } from "./tempo";
 // Lucro real de cada contrato: VPL menos o que já saiu (ou está a pagar) no financeiro e as baixas de estoque.
 // A comissão RT não entra como custo porque o VPL já é líquido dela.
 export type LinhaLucro = {
@@ -26,5 +27,5 @@ export function lucratividade(contratos: any[], lancs: any[], movs: any[]): Linh
 }
 
 export function inicioPeriodo(meses: number) {
-  const d = new Date(); d.setMonth(d.getMonth() - meses); d.setHours(0, 0, 0, 0); return d;
+  return new Date(inicioMesesAtras(meses));
 }

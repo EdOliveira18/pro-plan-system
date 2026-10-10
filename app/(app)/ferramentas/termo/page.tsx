@@ -25,7 +25,7 @@ export default async function Termo({ searchParams }: { searchParams: Promise<{ 
           <tbody>{(fs ?? []).map((f: any) => <tr key={f.numero}><td className="num">{f.numero}</td><td>{f.nome}</td><td>{f.marca}</td><td className="num">{f.serie}</td><td className="r num">{f.quantidade}</td></tr>)}
             {!(fs ?? []).length && <tr><td colSpan={5} className="note">Nenhuma ferramenta sob responsabilidade deste funcionário.</td></tr>}</tbody></table>
         <p>Comprometo-me a zelar pela guarda e conservação das ferramentas, devolvendo-as quando solicitado ou no encerramento do vínculo, e a comunicar imediatamente qualquer dano, perda ou furto.</p>
-        <p style={{ marginTop: 40 }}>{emp?.municipio ?? "_____________"}{emp?.uf ? "/" + emp.uf : ""}, {new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" })}.</p>
+        <p style={{ marginTop: 40 }}>{emp?.municipio ?? "_____________"}{emp?.uf ? "/" + emp.uf : ""}, {new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "long", year: "numeric" })}.</p>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 40, marginTop: 60 }}>
           <div style={{ borderTop: "1px solid var(--fg)", textAlign: "center", paddingTop: 6 }}>{p.nome}</div>
           <div style={{ borderTop: "1px solid var(--fg)", textAlign: "center", paddingTop: 6 }}>{emp?.razao_social || emp?.nome}</div>

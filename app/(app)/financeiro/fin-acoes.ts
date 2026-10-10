@@ -98,27 +98,57 @@ export async function gerarComissoes(fd: FormData) {
   const ctx = await contexto();
   const eid = ctx.empresa.id;
   const mes = String(fd.get("mes") || hojeISO().slice(0, 7));
+  if (!/^\d{4}-\d{2}$/.test(mes)) redirect("/financeiro/comissoes?msg=" + encodeURIComponent("Mês inválido."));
   const [a, m] = mes.split("-").map(Number);
   const ini = `${mes}-01`, fim = new Date(Date.UTC(a, m, 1)).toISOString().slice(0, 10);
-  const [{ data: cfg }, { data: ks }, { data: ms }, { data: ja }] = await Promise.all([
+  const [{ data: cfg }, { data: ks }, { data: ms }] = await Promise.all([
     ctx.supabase.from("configuracoes").select("faixas_comissao").eq("empresa_id", eid).single(),
     ctx.supabase.from("contratos").select("id, codigo, vpl, vendedor_id").eq("empresa_id", eid).gte("data_venda", ini).lt("data_venda", fim),
     ctx.supabase.from("membros").select("user_id, nome").eq("empresa_id", eid),
-    ctx.supabase.from("lancamentos").select("contrato_id").eq("empresa_id", eid).eq("categoria", "comissao_vendedor").is("excluido_em", null),
   ]);
+  const K = ((ks ?? []) as any[]).filter((k) => k.vendedor_id);
+  const { data: ja } = K.length
+    ? await ctx.supabase.from("lancamentos").select("id, contrato_id, valor, realizado").eq("empresa_id", eid).eq("categoria", "comissao_vendedor").is("excluido_em", null).in("contrato_id", K.map((k) => k.id))
+    : { data: [] as any[] };
   const faixas = ((cfg?.faixas_comissao ?? []) as any[]).sort((x, y) => x.a_partir_de - y.a_partir_de);
-  const tem = new Set((ja ?? []).map((x: any) => x.contrato_id));
   const porV = new Map<string, number>();
-  (ks ?? []).forEach((k: any) => porV.set(k.vendedor_id, (porV.get(k.vendedor_id) ?? 0) + Number(k.vpl)));
+  K.forEach((k) => porV.set(k.vendedor_id, (porV.get(k.vendedor_id) ?? 0) + Number(k.vpl)));
   const pag = new Date(Date.UTC(a, m, 5)).toISOString().slice(0, 10);
-  const novos = ((ks ?? []) as any[]).filter((k) => k.vendedor_id && !tem.has(k.id)).map((k) => {
+  const novos: any[] = [];
+  let atualizados = 0, ajustes = 0;
+  // a faixa depende do total do mês: uma venda nova pode subir o vendedor de faixa e mudar a comissão das vendas anteriores
+  for (const k of K) {
     const f = faixas.filter((x) => (porV.get(k.vendedor_id) ?? 0) >= x.a_partir_de).pop() ?? { pct: 0, nome: "" };
-    return { empresa_id: eid, contrato_id: k.id, data: pag, competencia: ini, descricao: `Comissão ${f.nome} contrato #${k.codigo}`, categoria: "comissao_vendedor", plano_conta: "3.2.1",
-      entidade: (ms ?? []).find((x: any) => x.user_id === k.vendedor_id)?.nome ?? "Vendedor", valor: -Math.round(Number(k.vpl) * Number(f.pct)) / 100 };
-  }).filter((x) => x.valor < 0);
-  if (novos.length) await ctx.supabase.from("lancamentos").insert(novos);
+    const alvo = -Math.round(Number(k.vpl) * Number(f.pct)) / 100;
+    const existentes = ((ja ?? []) as any[]).filter((l) => l.contrato_id === k.id);
+    const base = { empresa_id: eid, contrato_id: k.id, data: pag, competencia: ini, categoria: "comissao_vendedor", plano_conta: "3.2.1",
+      entidade: (ms ?? []).find((x: any) => x.user_id === k.vendedor_id)?.nome ?? "Vendedor" };
+    if (!existentes.length) {
+      if (alvo < 0) novos.push({ ...base, descricao: `Comissão ${f.nome} contrato #${k.codigo}`, valor: alvo });
+      continue;
+    }
+    const lancado = existentes.reduce((s, l) => s + Number(l.valor), 0);
+    const dif = Math.round((alvo - lancado) * 100) / 100;
+    if (Math.abs(dif) < 0.01) continue;
+    const aberto = existentes.find((l) => !l.realizado);
+    if (aberto && Number(aberto.valor) + dif <= 0) {
+      // ainda não foi paga: corrige o próprio lançamento
+      await ctx.supabase.from("lancamentos").update({ valor: Math.round((Number(aberto.valor) + dif) * 100) / 100, descricao: `Comissão ${f.nome} contrato #${k.codigo}` }).eq("id", aberto.id);
+      atualizados++;
+    } else {
+      // já paga: lança a diferença (a pagar se subiu de faixa, a descontar se caiu)
+      novos.push({ ...base, descricao: `${dif < 0 ? "Complemento" : "Estorno"} de comissão (faixa ${f.nome}) contrato #${k.codigo}`, valor: dif });
+      ajustes++;
+    }
+  }
+  if (novos.length) {
+    const { error } = await ctx.supabase.from("lancamentos").insert(novos);
+    if (error) redirect("/financeiro/comissoes?msg=" + encodeURIComponent("Erro ao lançar comissões: " + error.message));
+  }
   reval();
-  redirect("/financeiro/comissoes?msg=" + encodeURIComponent(novos.length ? `${novos.length} comissão(ões) lançada(s) em Contas a pagar.` : "Nenhuma comissão nova para lançar neste mês."));
+  const criadas = novos.length - ajustes;
+  const partes = [criadas && `${criadas} comissão(ões) nova(s)`, atualizados && `${atualizados} recalculada(s) pela faixa do mês`, ajustes && `${ajustes} ajuste(s) sobre comissão já paga`].filter(Boolean);
+  redirect("/financeiro/comissoes?msg=" + encodeURIComponent(partes.length ? partes.join(", ") + "." : "Nada a lançar: as comissões deste mês já estão corretas."));
 }
 
 // Contas financeiras: corrente, cartão, poupança, caixa

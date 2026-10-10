@@ -5,6 +5,7 @@ import { contexto } from "@/lib/contexto";
 import { lerOFX } from "@/lib/banco/ofx";
 import { conciliarEmpresa, pluggy, sincronizarConexao } from "@/lib/banco/processar";
 import { headers } from "next/headers";
+import { hojeISO, dataHora, somaDias } from "@/lib/tempo";
 
 const ir = (q: string) => {
   revalidatePath("/financeiro");
@@ -131,7 +132,7 @@ export async function sincronizarAgora(conexaoId: string) {
   try {
     // pede ao banco uma atualização nova (chega depois pelo webhook) e já traz o que está disponível
     await pluggy().updateItem(cx.item_id).catch(() => null);
-    const r = await sincronizarConexao(ctx.supabase, cx, { desde: new Date(Date.now() - 15 * 864e5).toISOString().slice(0, 10) });
+    const r = await sincronizarConexao(ctx.supabase, cx, { desde: somaDias(hojeISO(), -15) });
     msg(`Atualizado: ${r.novas} movimentações novas, ${r.conciliadas} conciliadas.`);
   } catch (e) {
     erro((e as Error).message);

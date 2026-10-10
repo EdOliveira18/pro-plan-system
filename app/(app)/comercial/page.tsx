@@ -7,6 +7,8 @@ import Confirmar from "@/components/Confirmar";
 import NavOrc from "./NavOrc";
 import { moverOrcamento } from "./acoes-status";
 import { MOTIVOS_PERDA } from "@/lib/motivos";
+import Paginacao, { pagina } from "@/components/Paginacao";
+import { filtroOrcamentos, limparTermo } from "@/lib/busca";
 
 async function novoOrcamento(fd: FormData) {
   "use server";
@@ -60,13 +62,19 @@ async function salvarConfig(fd: FormData) {
 
 const STATUS: Record<string, [string, string]> = { rascunho: ["Em elaboração", "p-neu"], apresentado: ["Apresentado", "p-info"] };
 
-export default async function Comercial({ searchParams }: { searchParams: Promise<{ erro?: string; cliente?: string; q?: string }> }) {
+export default async function Comercial({ searchParams }: { searchParams: Promise<{ erro?: string; cliente?: string; q?: string; pag?: string }> }) {
   const sp = await searchParams;
   const ctx = await contexto();
   const eid = ctx.empresa.id;
-  const [{ data: todos }, { data: clientes }, { data: parceiros }, { data: campanhas }, { data: cfg }] = await Promise.all([
-    ctx.supabase.from("orcamentos").select("id, numero, nome_projeto, status, created_at, data_entrega, calculo, vendedor_id, cliente:clientes(nome)").eq("empresa_id", eid).in("status", ["rascunho", "apresentado"]).order("numero", { ascending: false }).limit(1000),
-    ctx.supabase.from("clientes").select("id, nome").eq("empresa_id", eid).order("nome"),
+  const pg = pagina(sp.pag);
+  let qo = ctx.supabase.from("orcamentos").select("id, numero, nome_projeto, status, created_at, data_entrega, calculo, vendedor_id, cliente:clientes(nome)", { count: "exact" })
+    .eq("empresa_id", eid).in("status", ["rascunho", "apresentado"]);
+  const filtro = await filtroOrcamentos(ctx.supabase, eid, sp.q ?? "");
+  if (filtro) qo = qo.or(filtro);
+  const [{ data: todos, count }, { data: res }, { data: clientes }, { data: parceiros }, { data: campanhas }, { data: cfg }] = await Promise.all([
+    qo.order("numero", { ascending: false }).range(pg.de, pg.ate),
+    ctx.supabase.rpc("resumo_orcamentos_f", { p_empresa: eid, p_status: ["rascunho", "apresentado"], p_termo: null }),
+    ctx.supabase.from("clientes").select("id, nome").eq("empresa_id", eid).order("nome").limit(2000),
     ctx.supabase.from("parceiros").select("id, nome, tipo, rt_pct").eq("empresa_id", eid).order("nome"),
     ctx.supabase.from("campanhas").select("id, nome, canal, investimento").eq("empresa_id", eid).order("nome"),
     ctx.supabase.from("configuracoes").select("*").eq("empresa_id", eid).single(),
@@ -75,21 +83,18 @@ export default async function Comercial({ searchParams }: { searchParams: Promis
   const nomeVend = Object.fromEntries((membros ?? []).map((m: any) => [m.user_id, m.nome]));
   const gestor = ["dono", "gerente"].includes(ctx.papel);
   const valor = (o: any) => Number(o.calculo?.valorProposta ?? 0);
-  const pend = ((todos ?? []) as any[]).filter((o) => ["rascunho", "apresentado"].includes(o.status));
-  const totalPend = pend.reduce((a, o) => a + valor(o), 0);
-  const comValor = pend.filter((o) => valor(o) > 0);
-  const termo = (sp.q ?? "").toLowerCase().trim();
-  const orcs = ((todos ?? []) as any[]).filter((o) =>
-    !termo || [o.nome_projeto, o.cliente?.nome, String(o.numero)].some((x) => String(x ?? "").toLowerCase().includes(termo)));
+  const R = (res ?? {}) as any;
+  const qtdPend = Number(R.qtd ?? 0), totalPend = Number(R.valor ?? 0), comValor = Number(R.com_valor ?? 0);
+  const orcs = (todos ?? []) as any[];
   return (
     <>
       <div className="head"><div><h1>Lista de Orçamentos</h1><p className="sub">Orçamentos com olhinho, importação Promob e geração de contrato</p></div>
         <a className="btn primary" href="#novo">Cadastrar</a></div>
       {sp.erro && <div className="erro">{sp.erro}</div>}
       <div className="grid k3" style={{ marginBottom: 16 }}>
-        <div className="panel kpi kcard"><span className="tg p-warn">Pendentes</span><div className="v">{pend.length}</div><div className="l">Orçamentos pendentes</div></div>
+        <div className="panel kpi kcard"><span className="tg p-warn">Pendentes</span><div className="v">{qtdPend}</div><div className="l">Orçamentos pendentes</div></div>
         <div className="panel kpi kcard"><span className="tg p-warn">Em aberto</span><div className="v">{brl(totalPend)}</div><div className="l">Valor total pendente</div></div>
-        <div className="panel kpi kcard"><span className="tg p-info">Média</span><div className="v">{brl(comValor.length ? totalPend / comValor.length : 0)}</div><div className="l">Ticket médio dos pendentes</div></div>
+        <div className="panel kpi kcard"><span className="tg p-info">Média</span><div className="v">{brl(comValor ? totalPend / comValor : 0)}</div><div className="l">Ticket médio dos pendentes</div></div>
       </div>
       <NavOrc atual="/comercial" />
       <div className="grid two">
@@ -124,7 +129,7 @@ export default async function Comercial({ searchParams }: { searchParams: Promis
             </tbody>
           </table></div>
           {!orcs.length && <div className="vazio"><b>Nenhum orçamento encontrado.</b></div>}
-          <div className="cad-rod note">Mostrando {orcs.length} registro(s)</div>
+          <Paginacao total={count ?? 0} pag={pg.pag} base="/comercial" params={sp} />
         </div>
         <div className="panel" id="novo">
           <h2>Novo orçamento</h2>

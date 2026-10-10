@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 import { contexto } from "@/lib/contexto";
 import { brl, data } from "@/lib/formato";
 import { pendenciasFiscais } from "@/lib/fiscal";
+import Paginacao, { pagina } from "@/components/Paginacao";
+import { idsContratos, juntarOr, limparTermo } from "@/lib/busca";
 
 const STATUS: Record<string, [string, string]> = {
   rascunho: ["Rascunho", "p-neu"], pendente: ["Aguardando envio", "p-warn"], processando: ["Processando", "p-info"],
@@ -30,24 +32,30 @@ async function novaNota(fd: FormData) {
   redirect("/notas?" + (error ? "erro=" + encodeURIComponent(error.message) : "msg=" + encodeURIComponent("Rascunho criado. A transmissão para a Sefaz e para a NFS-e Nacional é liberada assim que o certificado for validado no ambiente de testes.")));
 }
 
-export default async function Notas({ searchParams }: { searchParams: Promise<{ q?: string; tipo?: string; status?: string; erro?: string; msg?: string }> }) {
+export default async function Notas({ searchParams }: { searchParams: Promise<{ q?: string; tipo?: string; status?: string; erro?: string; msg?: string; pag?: string }> }) {
   const sp = await searchParams;
   const ctx = await contexto();
   const sb = ctx.supabase;
   const eid = ctx.empresa.id;
-  const [{ data: e }, { data: cert }, { data: cfg }, { data: notas }, { data: contratos }] = await Promise.all([
+  const pg = pagina(sp.pag);
+  let qn = sb.from("notas_fiscais").select("*, contrato:contratos(id, codigo, cliente:clientes(nome))", { count: "exact" }).eq("empresa_id", eid);
+  if (sp.tipo) qn = qn.eq("tipo", sp.tipo);
+  if (sp.status) qn = qn.eq("status", sp.status);
+  const tn = limparTermo(sp.q);
+  if (tn) {
+    const ks = await idsContratos(sb, eid, tn);
+    qn = qn.or(juntarOr([`destinatario.ilike.%${tn}%`, `chave.ilike.%${tn}%`, `numero.ilike.%${tn}%`, ks.length && `contrato_id.in.(${ks.join(",")})`]));
+  }
+  const [{ data: e }, { data: cert }, { data: cfg }, { data: notas, count: totalNotas }, { data: contratos }] = await Promise.all([
     sb.from("empresas").select("*").eq("id", eid).single(),
     sb.from("certificados").select("valido_ate").eq("empresa_id", eid).maybeSingle(),
     sb.from("config_fiscal").select("*").eq("empresa_id", eid).maybeSingle(),
-    sb.from("notas_fiscais").select("*, contrato:contratos(id, codigo, cliente:clientes(nome))").eq("empresa_id", eid).order("created_at", { ascending: false }).limit(500),
+    qn.order("created_at", { ascending: false }).order("id").range(pg.de, pg.ate),
     sb.from("contratos").select("id, codigo, valor_total, cliente:clientes(nome)").eq("empresa_id", eid).order("created_at", { ascending: false }).limit(300),
   ]);
   // certificado só é visível para gestor; para os demais a pendência vem da tabela, então não acusamos falta de certificado
   const pend = pendenciasFiscais(e, cert ?? (["dono", "gerente"].includes(ctx.papel) ? null : { valido_ate: null }), cfg);
-  const q = (sp.q ?? "").toLowerCase().trim();
-  const lista = ((notas ?? []) as any[]).filter((n) =>
-    (!q || [n.destinatario, n.contrato?.cliente?.nome, n.chave, n.numero].some((x) => String(x ?? "").toLowerCase().includes(q))) &&
-    (!sp.tipo || n.tipo === sp.tipo) && (!sp.status || n.status === sp.status));
+  const lista = (notas ?? []) as any[];
   const qs = new URLSearchParams(Object.entries({ q: sp.q, tipo: sp.tipo, status: sp.status }).filter(([, v]) => v) as [string, string][]).toString();
 
   return (
@@ -89,6 +97,7 @@ export default async function Notas({ searchParams }: { searchParams: Promise<{ 
             {!lista.length && <tr><td colSpan={7} className="note" style={{ textAlign: "center" }}>Nenhuma nota encontrada.</td></tr>}
           </tbody>
         </table></div>
+        <Paginacao total={totalNotas ?? 0} pag={pg.pag} base="/notas" params={sp} />
       </div>
 
       <div className="panel mt">

@@ -2,6 +2,7 @@ import { NextResponse, after, type NextRequest } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sincronizarConexao } from "@/lib/banco/processar";
+import { hojeISO, dataHora, somaDias } from "@/lib/tempo";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -39,7 +40,7 @@ export async function POST(req: NextRequest) {
         } else if (ev.event === "item/error") {
           await sb.from("conexoes_bancarias").update({ status: "ERROR", erro: ev.error?.message ?? "Erro na conexão com o banco" }).eq("id", cx.id);
         } else {
-          await sincronizarConexao(sb, cx, { desde: new Date(Date.now() - 15 * 864e5).toISOString().slice(0, 10) });
+          await sincronizarConexao(sb, cx, { desde: somaDias(hojeISO(), -15) });
         }
       }
     } catch (e) {

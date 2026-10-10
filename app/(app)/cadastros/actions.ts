@@ -21,6 +21,7 @@ export async function salvarCadastro(slug: string, id: string | null, fd: FormDa
   const row: Record<string, unknown> = {};
   const faltando: string[] = [];
   for (const c of camposDe(e)) {
+    if (c.soNovo && id) continue; // ex.: estoque só muda por pedido ou ajuste registrado
     const v = converter(c, fd.get(c.n));
     if (c.obrig && (v === null || v === "")) faltando.push(c.label);
     row[c.n] = v;
@@ -30,19 +31,40 @@ export async function salvarCadastro(slug: string, id: string | null, fd: FormDa
   if (e.tabela === "clientes") row.endereco = enderecoTexto(row);
   Object.assign(row, e.filtro ?? {});
 
+  // campos sigilosos saem da linha principal e vão para pessoas_sigilo (só quem é do financeiro grava)
+  const sigilo: Record<string, unknown> = {};
+  for (const k of e.sigilo ?? []) { if (k in row) sigilo[k] = row[k]; delete row[k]; }
+
   const sb = ctx.supabase;
   const q = id
-    ? sb.from(e.tabela).update(row).eq("id", id).eq("empresa_id", ctx.empresa.id)
-    : sb.from(e.tabela).insert({ ...row, empresa_id: ctx.empresa.id, ...(e.tabela === "clientes" ? { created_by: ctx.userId } : {}), ...(e.tabela === "leads" ? { vendedor_id: ctx.userId } : {}) });
-  const { error } = await q;
+    ? sb.from(e.tabela).update(row).eq("id", id).eq("empresa_id", ctx.empresa.id).select("id").maybeSingle()
+    : sb.from(e.tabela).insert({ ...row, empresa_id: ctx.empresa.id, ...(e.tabela === "clientes" ? { created_by: ctx.userId } : {}), ...(e.tabela === "leads" ? { vendedor_id: ctx.userId } : {}) }).select("id").single();
+  const { data: salvo, error } = await q;
   if (error) {
     const msg = error.code === "42501" || /row-level security/i.test(error.message)
       ? "Seu perfil não tem permissão para gravar este cadastro. Peça ao dono, gerente ou financeiro."
       : error.code === "23505" ? `Já existe ${e.artigo === "a" ? "uma" : "um"} ${e.singular} com esses dados.` : error.message;
     voltar(slug, "erro", msg, destino);
   }
+  if (!salvo) voltar(slug, "erro", "Cadastro não encontrado ou sem permissão para alterar.", destino);
+  if (e.sigilo && ctx.financeiro) {
+    const { error: es } = await sb.from("pessoas_sigilo").upsert({ pessoa_id: salvo!.id, empresa_id: ctx.empresa.id, ...sigilo });
+    if (es) voltar(slug, "erro", "Cadastro salvo, mas os dados de pagamento não: " + es.message, `/${salvo!.id}`);
+  }
   revalidatePath(`/cadastros/${slug}`);
   voltar(slug, "msg", `${e.singular[0].toUpperCase() + e.singular.slice(1)} ${id ? "atualizad" : "cadastrad"}${e.artigo} com sucesso.`);
+}
+
+export async function ajustarEstoque(id: string, fd: FormData) {
+  const ctx = await contexto();
+  const qtd = Number(String(fd.get("quantidade") ?? "").replace(/\./g, "").replace(",", "."));
+  const motivo = String(fd.get("motivo") ?? "").trim();
+  if (!Number.isFinite(qtd) || qtd < 0) voltar("produtos", "erro", "Informe a quantidade contada (zero ou mais).", `/${id}`);
+  if (!motivo) voltar("produtos", "erro", "Informe o motivo do ajuste.", `/${id}`);
+  const { error } = await ctx.supabase.rpc("ajustar_estoque", { p_produto: id, p_quantidade: qtd, p_motivo: motivo });
+  if (error) voltar("produtos", "erro", /SEM_PERMISSAO/.test(error.message) ? "Seu perfil não pode ajustar estoque." : error.message, `/${id}`);
+  revalidatePath(`/cadastros/produtos/${id}`);
+  redirect(`/cadastros/produtos/${id}?msg=` + encodeURIComponent("Estoque ajustado e registrado no histórico."));
 }
 
 export async function excluirCadastro(slug: string, id: string) {

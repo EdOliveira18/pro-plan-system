@@ -4,9 +4,11 @@ import { brl, data } from "@/lib/formato";
 import { hojeISO, mesAtual } from "@/lib/financeiro";
 import Confirmar from "@/components/Confirmar";
 import NavFin from "../NavFin";
+import Paginacao, { pagina } from "@/components/Paginacao";
+import { limparTermo } from "@/lib/busca";
 import { pagarSelecionados, pagarUm, estornarUm, excluirLancamento } from "../fin-acoes";
 
-type SP = { tipo?: string; atraso?: string; de?: string; ate?: string; q?: string; o?: string; msg?: string };
+type SP = { tipo?: string; atraso?: string; de?: string; ate?: string; q?: string; o?: string; msg?: string; pag?: string };
 
 export default async function Lancamentos({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
@@ -16,18 +18,24 @@ export default async function Lancamentos({ searchParams }: { searchParams: Prom
   const hoje = hojeISO();
   const per = mesAtual();
   const de = sp.de ?? per.de, ate = sp.ate ?? per.ate;
-  let q = ctx.supabase.from("lancamentos").select("id, data, descricao, entidade, valor, realizado, pago_em, forma_pagamento, documento, categoria, plano_conta, contrato:contratos(id, codigo, cliente:clientes(nome)), conta:contas_bancarias(nome)")
+  const termo = limparTermo(sp.q);
+  const pg = pagina(sp.pag);
+  let q = ctx.supabase.from("lancamentos").select("id, data, descricao, entidade, valor, realizado, pago_em, forma_pagamento, documento, categoria, plano_conta, contrato:contratos(id, codigo, cliente:clientes(nome)), conta:contas_bancarias(nome)", { count: "exact" })
     .eq("empresa_id", ctx.empresa.id).is("excluido_em", null);
   if (tipo === "pagar") q = q.lt("valor", 0);
   if (tipo === "receber") q = q.gt("valor", 0);
   if (atraso) q = q.eq("realizado", false).lt("data", hoje);
   else q = q.gte("data", de).lte("data", ate);
+  if (termo) q = q.or(`descricao.ilike.%${termo}%,entidade.ilike.%${termo}%,documento.ilike.%${termo}%`);
   const ordem = sp.o ?? "data";
-  const { data: rows, error } = await q.order(ordem === "valor" ? "valor" : ordem === "pago" ? "pago_em" : ordem === "descricao" ? "descricao" : "data", { ascending: true }).limit(2000);
-  const t = (sp.q ?? "").toLowerCase().trim();
-  const L = ((rows ?? []) as any[]).filter((l) => !t || [l.descricao, l.entidade, l.documento, l.contrato?.codigo, l.contrato?.cliente?.nome, String(Math.abs(l.valor)).replace(".", ",")].some((x) => String(x ?? "").toLowerCase().includes(t)));
-  const S = (f: (l: any) => boolean) => L.filter(f).reduce((a, l) => a + Math.abs(Number(l.valor)), 0);
-  const recPagas = S((l) => l.valor > 0 && l.realizado), despPagas = S((l) => l.valor < 0 && l.realizado), recPend = S((l) => l.valor > 0 && !l.realizado), despPend = S((l) => l.valor < 0 && !l.realizado);
+  // totais calculados no banco com os mesmos filtros, sem limite de linhas
+  const [{ data: rows, count, error }, { data: res }] = await Promise.all([
+    q.order(ordem === "valor" ? "valor" : ordem === "pago" ? "pago_em" : ordem === "descricao" ? "descricao" : "data", { ascending: true }).order("id").range(pg.de, pg.ate),
+    ctx.supabase.rpc("resumo_lancamentos", { p_empresa: ctx.empresa.id, p_de: de, p_ate: ate, p_tipo: tipo, p_atraso: atraso, p_hoje: hoje, p_termo: termo }),
+  ]);
+  const L = (rows ?? []) as any[];
+  const R = (res ?? {}) as any;
+  const recPagas = Number(R.rec_pagas ?? 0), despPagas = Number(R.desp_pagas ?? 0), recPend = Number(R.rec_pend ?? 0), despPend = Number(R.desp_pend ?? 0);
   const titulo = atraso ? (tipo === "receber" ? "Receitas em atraso" : "Despesas em atraso") : tipo === "pagar" ? "Contas a pagar" : tipo === "receber" ? "Contas a receber" : "Listagem de lançamentos";
   const atual = `/financeiro/lancamentos${tipo !== "todos" ? "?tipo=" + tipo : ""}${atraso ? "&atraso=1" : ""}`;
   const qs = (o: string) => `?${new URLSearchParams({ ...(tipo !== "todos" ? { tipo } : {}), ...(atraso ? { atraso: "1" } : { de, ate }), ...(sp.q ? { q: sp.q } : {}), o }).toString()}`;
@@ -49,7 +57,7 @@ export default async function Lancamentos({ searchParams }: { searchParams: Prom
     <div className="panel" style={{ padding: 0 }}>
       <form className="cad-busca">
         {tipo !== "todos" && <input type="hidden" name="tipo" value={tipo} />}{atraso && <input type="hidden" name="atraso" value="1" />}
-        <input name="q" defaultValue={sp.q ?? ""} placeholder="Pesquise por entidade, descrição, nº documento, contrato ou valor" style={{ flex: 1, minWidth: 220 }} aria-label="Buscar" />
+        <input name="q" defaultValue={sp.q ?? ""} placeholder="Pesquise por entidade, descrição ou nº do documento" style={{ flex: 1, minWidth: 220 }} aria-label="Buscar" />
         {!atraso && <><input type="date" name="de" defaultValue={de} aria-label="De" /><input type="date" name="ate" defaultValue={ate} aria-label="Até" /></>}
         <button className="btn">Filtrar</button>
       </form>
@@ -75,9 +83,9 @@ export default async function Lancamentos({ searchParams }: { searchParams: Prom
         </table></div>
         {!L.length && <div className="vazio"><b>Nenhum lançamento encontrado.</b></div>}
         <div className="cad-rod" style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-          <span className="note">Mostrando {L.length} registro(s)</span>
-          {L.some((l) => !l.realizado) && <button className="btn sm">Marcar selecionados como pagos</button>}
+          {L.some((l) => !l.realizado) ? <button className="btn sm">Marcar selecionados como pagos</button> : <span />}
         </div>
+        <Paginacao total={count ?? 0} pag={pg.pag} base="/financeiro/lancamentos" params={{ ...sp, pag: undefined }} />
       </form>
     </div>
   </>);

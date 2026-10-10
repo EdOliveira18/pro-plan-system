@@ -3,14 +3,18 @@ import { redirect } from "next/navigation";
 import { contexto } from "@/lib/contexto";
 import { enviarEmail, emailConfigurado, moldura, esc } from "@/lib/email";
 import { data } from "@/lib/formato";
+import Copiar from "@/components/Copiar";
+
+const SITE = process.env.APP_URL || "https://pro-plan-system.vercel.app";
+const linkConvite = (token: string) => `${SITE}/convite/${token}`;
 
 const PAPEIS: [string, string, string][] = [
   ["dono", "Dono", "Tudo, inclusive equipe, premissas do olhinho e venda abaixo do mínimo"],
   ["gerente", "Gerente", "Mesmos poderes do dono"],
-  ["vendedor", "Vendedor", "Usa os módulos da operação, sem mexer em equipe e premissas"],
-  ["projetista", "Projetista", "Usa os módulos da operação, sem mexer em equipe e premissas"],
-  ["financeiro", "Financeiro", "Usa os módulos da operação, sem mexer em equipe e premissas"],
-  ["montador", "Montador", "Como o vendedor, mas sem acesso aos lançamentos financeiros"],
+  ["vendedor", "Vendedor", "Comercial, cadastros e operação; não vê financeiro, salários nem lucratividade"],
+  ["projetista", "Projetista", "Comercial, cadastros e operação; não vê financeiro, salários nem lucratividade"],
+  ["financeiro", "Financeiro", "Operação mais financeiro, lucratividade e dados de pagamento da equipe"],
+  ["montador", "Montador", "Só produção, entregas, assistência, ferramentas e render; não vê valores"],
 ];
 const NOME = Object.fromEntries(PAPEIS.map(([k, n]) => [k, n]));
 const ir = (m: string, tipo: "erro" | "msg" = "erro") => redirect(`/equipe?${tipo}=${encodeURIComponent(m)}`);
@@ -19,20 +23,20 @@ async function convidar(fd: FormData) {
   "use server";
   const ctx = await contexto();
   const email = String(fd.get("email")).trim().toLowerCase();
-  const { error } = await ctx.supabase.from("convites").insert({
+  const { data: novo, error } = await ctx.supabase.from("convites").insert({
     empresa_id: ctx.empresa.id, email, nome: String(fd.get("nome")).trim(), papel: String(fd.get("papel")), criado_por: ctx.userId,
-  });
-  if (error) ir(error.code === "23505" ? "Esse e-mail já foi convidado." : "Somente dono ou gerente cadastra usuários.");
+  }).select("token").single();
+  if (error || !novo) ir(error?.code === "23505" ? "Esse e-mail já foi convidado. Use o link que aparece na lista." : "Somente dono ou gerente cadastra usuários.");
   revalidatePath("/equipe");
-  let aviso = `Peça para ${email} criar a conta com esse e-mail; ele entra direto na equipe.`;
+  const link = linkConvite(novo!.token);
+  let aviso = `Envie o link do convite para ${email} (botões ao lado do nome). Ele vale 7 dias.`;
   if (emailConfigurado()) {
-    const site = process.env.APP_URL || "https://pro-plan-system.vercel.app";
     try {
       await enviarEmail({ para: email, assunto: `Convite para a equipe ${ctx.empresa.nome} no Pro Plan System`,
         html: moldura("Você foi convidado", `<p>Olá, ${esc(fd.get("nome"))}! Você foi adicionado à equipe de <b>${esc(ctx.empresa.nome)}</b> no Pro Plan System.</p>
-          <p>Para entrar, crie sua conta usando este mesmo e-mail (${esc(email)}):</p>
-          <p><a href="${site}/login" style="background:#1F5E57;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;display:inline-block">Criar minha conta</a></p>`) });
-      aviso = `Convite enviado por e-mail para ${email}.`;
+          <p>Abra o link abaixo e crie sua conta usando este mesmo e-mail (${esc(email)}). O link vale 7 dias.</p>
+          <p><a href="${link}" style="background:#1F5E57;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;display:inline-block">Aceitar convite</a></p>`) });
+      aviso = `Convite enviado por e-mail para ${email}. Se preferir, mande o link pelo WhatsApp também.`;
     } catch { aviso += " (O e-mail de convite não pôde ser enviado; avise a pessoa.)"; }
   }
   ir(`Usuário cadastrado. ${aviso}`, "msg");
@@ -59,7 +63,7 @@ async function alternarAtivo(userId: string, ativo: boolean) {
 async function cancelarConvite(id: string) {
   "use server";
   const ctx = await contexto();
-  await ctx.supabase.from("convites").delete().eq("id", id);
+  await ctx.supabase.from("convites").delete().eq("id", id).eq("empresa_id", ctx.empresa.id);
   revalidatePath("/equipe");
 }
 
@@ -98,13 +102,22 @@ export default async function Equipe({ searchParams }: { searchParams: Promise<{
             ))}</tbody>
           </table></div>
           {gestor && !!convites?.length && (<>
-            <h2 className="mt">Aguardando criar a conta</h2>
-            {convites.map((c: any) => (
-              <div key={c.id} className="row" style={{ alignItems: "center" }}>
-                <span><b>{c.nome}</b> <span className="note">{c.email} · {NOME[c.papel]}</span></span>
-                <form action={cancelarConvite.bind(null, c.id)}><button className="btn sm">Cancelar</button></form>
-              </div>
-            ))}
+            <h2 className="mt">Convites pendentes</h2>
+            {convites.map((c: any) => {
+              const vencido = new Date(c.expira_em) < new Date();
+              const link = linkConvite(c.token);
+              const zap = `https://wa.me/?text=${encodeURIComponent(`Olá, ${c.nome}! Seu convite para a equipe ${ctx.empresa.nome} no Pro Plan System: ${link}`)}`;
+              return (
+                <div key={c.id} className="row" style={{ alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                  <span><b>{c.nome}</b> <span className="note">{c.email} · {NOME[c.papel]} · {vencido ? "vencido" : "vale até " + data(c.expira_em)}</span></span>
+                  <span style={{ display: "flex", gap: 6 }}>
+                    {!vencido && <><Copiar texto={link} /><a className="btn sm" href={zap} target="_blank" rel="noopener noreferrer">WhatsApp</a></>}
+                    <form action={cancelarConvite.bind(null, c.id)}><button className="btn sm">{vencido ? "Remover" : "Cancelar"}</button></form>
+                  </span>
+                </div>
+              );
+            })}
+            <p className="note">Convite vencido: remova e cadastre de novo para gerar outro link.</p>
           </>)}
         </div>
         <div className="panel">
@@ -115,7 +128,7 @@ export default async function Equipe({ searchParams }: { searchParams: Promise<{
               <label>E-mail<input name="email" type="email" required /></label>
               <label>Papel<select name="papel" defaultValue="vendedor">{PAPEIS.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></label>
               <button className="btn primary">Cadastrar</button>
-              <p className="note" style={{ margin: 0 }}>Depois, a pessoa abre o sistema, clica em <b>Criar conta</b> e usa esse mesmo e-mail. Ela entra direto na sua empresa, com o papel escolhido.</p>
+              <p className="note" style={{ margin: 0 }}>O sistema gera um link de convite pessoal, válido por 7 dias. Mande pelo WhatsApp ou e-mail; a pessoa cria a conta com esse mesmo e-mail e entra na sua empresa com o papel escolhido.</p>
             </form>
           ) : <p className="note">Somente dono ou gerente cadastra usuários.</p>}
           <h2 className="mt">O que cada papel faz</h2>

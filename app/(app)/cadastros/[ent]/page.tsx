@@ -2,17 +2,21 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { contexto } from "@/lib/contexto";
 import { entidade } from "@/lib/cadastros";
+import { contexto as ctxPapel, exigir } from "@/lib/contexto";
 import Confirmar from "@/components/Confirmar";
 import { excluirCadastro, importarClientes, restaurarCadastro } from "../actions";
+import { dataHora } from "@/lib/tempo";
+import Paginacao, { pagina } from "@/components/Paginacao";
 
 export default async function Lista({ params, searchParams }: {
   params: Promise<{ ent: string }>;
-  searchParams: Promise<{ q?: string; status?: string; erro?: string; msg?: string; lixeira?: string }>;
+  searchParams: Promise<{ q?: string; status?: string; erro?: string; msg?: string; lixeira?: string; pag?: string }>;
 }) {
   const { ent } = await params;
   const sp = await searchParams;
   const e = entidade(ent);
   if (!e) notFound();
+  { const c0 = await ctxPapel(); exigir(c0, c0.papel !== "montador" || e.slug === "ferramentas"); }
   const ctx = await contexto();
   let q = ctx.supabase.from(e.tabela)
     .select(e.select ?? (e.tabela === "clientes" ? "*, contratos(id, codigo)" : "*"), { count: "exact" })
@@ -21,9 +25,10 @@ export default async function Lista({ params, searchParams }: {
   if (e.lixeira) q = naLixeira ? q.not("excluido_em", "is", null) : q.is("excluido_em", null);
   for (const [k, v] of Object.entries(e.filtro ?? {})) q = q.eq(k, v);
   if (sp.status && e.colunas.some((c) => c.tipo === "status")) q = q.eq("status", sp.status);
-  const termo = (sp.q ?? "").trim().replace(/[%,()]/g, " ");
+  const termo = (sp.q ?? "").trim().replace(/[%,()*\\]/g, " ").slice(0, 80);
+  const pg = pagina(sp.pag);
   if (termo) q = q.or(e.buscaEm.map((c) => `${c}.ilike.%${termo}%`).join(","));
-  const { data, count, error } = await q.order(e.ordem ?? "nome", { ascending: true }).limit(500);
+  const { data, count, error } = await q.order(e.ordem ?? "nome", { ascending: true }).order("id").range(pg.de, pg.ate);
   const lista = (data ?? []) as any[];
   const nomes: Record<string, string> = {};
   if (naLixeira) {
@@ -89,7 +94,7 @@ export default async function Lista({ params, searchParams }: {
                 })}
                 {e.slug === "clientes" && <td>{r.contratos?.length ? r.contratos.map((k: any) => <Link key={k.id} className="idc" href={`/contratos/${k.id}`} style={{ marginRight: 8 }}>#{k.codigo}</Link>)
                   : <Link className="btn sm" href={`/comercial?cliente=${r.id}`}>Criar orçamento</Link>}</td>}
-                {naLixeira && <><td className="num note">{new Date(r.excluido_em).toLocaleString("pt-BR")}</td><td className="note">{nomes[r.excluido_por] ?? "n/a"}</td></>}
+                {naLixeira && <><td className="num note">{dataHora(r.excluido_em)}</td><td className="note">{nomes[r.excluido_por] ?? "n/a"}</td></>}
                 <td className="r" style={{ whiteSpace: "nowrap" }}>
                   {naLixeira ? <form action={restaurarCadastro.bind(null, e.slug, r.id)} style={{ display: "inline" }}><button className="btn sm">Restaurar</button></form> : <>
                   <Link className="btn sm" href={`/cadastros/${e.slug}/${r.id}`}>Editar</Link>{" "}
@@ -106,7 +111,7 @@ export default async function Lista({ params, searchParams }: {
             {!filtrando && <><p>{e.vazio}</p><Link className="btn primary" href={`/cadastros/${e.slug}/novo`}>Cadastrar primeir{e.artigo} {e.singular}</Link></>}
           </div>
         )}
-        <div className="cad-rod note">Mostrando {lista.length ? 1 : 0} a {lista.length} de {count ?? lista.length} registros</div>
+        <Paginacao total={count ?? 0} pag={pg.pag} base={`/cadastros/${e.slug}`} params={sp} />
       </div>
     </>
   );

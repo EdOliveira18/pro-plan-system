@@ -1,3 +1,5 @@
+import Paginacao, { pagina } from "@/components/Paginacao";
+import { idsContratos, limparTermo } from "@/lib/busca";
 import Link from "next/link";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
@@ -13,28 +15,31 @@ async function gerar(fd: FormData) {
   revalidatePath("/pos-venda");
 }
 
-export default async function PosVenda({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
+export default async function PosVenda({ searchParams }: { searchParams: Promise<{ q?: string; pag?: string }> }) {
   const sp = await searchParams;
   const ctx = await contexto();
   const h = await headers();
   const base = process.env.APP_URL || `https://${h.get("host")}`;
-  const [{ data: rows }, { data: ks }] = await Promise.all([
-    ctx.supabase.from("pesquisas").select("*, contrato:contratos(id, codigo, cliente:clientes(nome, celular, telefone))").eq("empresa_id", ctx.empresa.id).order("numero", { ascending: false }),
+  const pg = pagina(sp.pag);
+  let qp = ctx.supabase.from("pesquisas").select("*, contrato:contratos(id, codigo, cliente:clientes(nome, celular, telefone))", { count: "exact" }).eq("empresa_id", ctx.empresa.id);
+  const t = limparTermo(sp.q);
+  if (t) { const kids = await idsContratos(ctx.supabase, ctx.empresa.id, t); qp = kids.length ? qp.in("contrato_id", kids) : qp.is("id", null); }
+  const [{ data: rows, count }, { data: res }, { data: ks }] = await Promise.all([
+    qp.order("numero", { ascending: false }).range(pg.de, pg.ate),
+    ctx.supabase.rpc("resumo_pesquisas", { p_empresa: ctx.empresa.id }),
     ctx.supabase.from("contratos").select("id, codigo, cliente:clientes(nome)").eq("empresa_id", ctx.empresa.id).order("created_at", { ascending: false }).limit(300),
   ]);
-  const P = (rows ?? []) as any[];
-  const resp = P.filter((p) => p.respondido_em);
-  const nps = resp.length ? Math.round(((resp.filter((p) => p.nota_nps >= 9).length - resp.filter((p) => p.nota_nps <= 6).length) / resp.length) * 100) : null;
-  const media = (k: string) => (resp.length ? (resp.reduce((a, p) => a + Number(p[k] ?? 0), 0) / resp.length).toFixed(1).replace(".", ",") : "n/a");
-  const t = (sp.q ?? "").toLowerCase().trim();
-  const L = P.filter((p) => !t || [p.contrato?.cliente?.nome, p.contrato?.codigo].some((x) => String(x ?? "").toLowerCase().includes(t)));
+  const L = (rows ?? []) as any[];
+  const R = (res ?? {}) as any;
+  const nps = R.nps == null ? null : Number(R.nps);
+  const media = (k: string) => (R[k] == null ? "n/a" : String(R[k]).replace(".", ","));
   return (<>
     <div className="head"><div><h1>Pós-venda</h1><p className="sub">Pesquisa de satisfação: gere o link, mande para o cliente pelo WhatsApp e acompanhe as notas</p></div></div>
     <div className="grid kpis" style={{ marginBottom: 16 }}>
-      <div className="panel kpi"><div className="l">NPS</div><div className="v" style={{ color: nps == null ? undefined : nps >= 50 ? "var(--good)" : nps < 0 ? "var(--bad)" : "var(--warn)" }}>{nps ?? "n/a"}</div><div className="s">{resp.length} de {P.length} responderam</div></div>
-      <div className="panel kpi"><div className="l">Atendimento</div><div className="v">{media("nota_atendimento")}</div><div className="s">média de 1 a 5</div></div>
-      <div className="panel kpi"><div className="l">Montagem</div><div className="v">{media("nota_montagem")}</div><div className="s">média de 1 a 5</div></div>
-      <div className="panel kpi"><div className="l">Prazo</div><div className="v">{media("nota_prazo")}</div><div className="s">média de 1 a 5</div></div>
+      <div className="panel kpi"><div className="l">NPS</div><div className="v" style={{ color: nps == null ? undefined : nps >= 50 ? "var(--good)" : nps < 0 ? "var(--bad)" : "var(--warn)" }}>{nps ?? "n/a"}</div><div className="s">{Number(R.respondidas ?? 0)} de {Number(R.total ?? 0)} responderam</div></div>
+      <div className="panel kpi"><div className="l">Atendimento</div><div className="v">{media("atendimento")}</div><div className="s">média de 1 a 5</div></div>
+      <div className="panel kpi"><div className="l">Montagem</div><div className="v">{media("montagem")}</div><div className="s">média de 1 a 5</div></div>
+      <div className="panel kpi"><div className="l">Prazo</div><div className="v">{media("prazo")}</div><div className="s">média de 1 a 5</div></div>
     </div>
     <form action={gerar} className="panel" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
       <b>Nova pesquisa</b><select name="contrato_id" required defaultValue="" style={{ minWidth: 260 }}><option value="">Escolha o contrato</option>{(ks ?? []).map((k: any) => <option key={k.id} value={k.id}>#{k.codigo} · {k.cliente?.nome}</option>)}</select>
@@ -57,6 +62,7 @@ export default async function PosVenda({ searchParams }: { searchParams: Promise
         })}</tbody>
       </table></div>
       {!L.length && <div className="vazio"><b>Nenhum pós-venda encontrado.</b></div>}
+      <Paginacao total={count ?? 0} pag={pg.pag} base="/pos-venda" params={sp} />
     </div>
   </>);
 }

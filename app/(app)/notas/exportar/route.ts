@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
   const csv = [
     ["Tipo", "Série", "Número", "Chave", "Destinatário", "Contrato", "Emissão", "Situação", "Valor"].join(";"),
     ...linhas.map((n) => [n.tipo, n.serie, n.numero, n.chave, n.destinatario ?? n.contrato?.cliente?.nome, n.contrato?.codigo,
-      n.emitida_em ? new Date(n.emitida_em).toLocaleDateString("pt-BR") : "", n.status, Number(n.valor).toFixed(2).replace(".", ",")].map(esc).join(";")),
+      n.emitida_em ? new Date(n.emitida_em).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" }) : "", n.status, Number(n.valor).toFixed(2).replace(".", ",")].map(esc).join(";")),
   ].join("\r\n");
   return new NextResponse("﻿" + csv, {
     headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="notas-fiscais.csv"` },

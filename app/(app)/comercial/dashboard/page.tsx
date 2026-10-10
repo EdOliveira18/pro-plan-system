@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { contexto } from "@/lib/contexto";
 import { brl, pct } from "@/lib/formato";
-import { inicioPeriodo, lucratividade } from "@/lib/lucratividade";
+import { inicioPeriodo } from "@/lib/lucratividade";
+import { hojeISO } from "@/lib/tempo";
 import NavOrc from "../NavOrc";
 
 const PERIODOS: [string, string][] = [["1", "1 mês"], ["3", "3 meses"], ["6", "6 meses"], ["12", "12 meses"]];
@@ -12,34 +13,31 @@ export default async function DashOrc({ searchParams }: { searchParams: Promise<
   const eid = ctx.empresa.id;
   const meses = Number(sp.p ?? 3) || 3;
   const desde = inicioPeriodo(meses).toISOString();
-  let q = ctx.supabase.from("orcamentos").select("id, status, created_at, faturado_em, perdido_em, calculo, vendedor_id, contratos(id, valor_total)").eq("empresa_id", eid).neq("status", "excluido").gte("created_at", desde);
-  if (sp.v) q = q.eq("vendedor_id", sp.v);
-  let qk = ctx.supabase.from("contratos").select("id, codigo, valor_total, vpl, custo_previsto, lucro_previsto, created_at, vendedor_id, cliente:clientes(nome)").eq("empresa_id", eid).gte("created_at", desde);
-  if (sp.v) qk = qk.eq("vendedor_id", sp.v);
-  const [{ data: orcs }, { data: ms }, { data: ks }] = await Promise.all([q, ctx.supabase.from("membros").select("user_id, nome").eq("empresa_id", eid).order("nome"), qk]);
-  const ids = (ks ?? []).map((k: any) => k.id);
-  const [{ data: lancs }, { data: movs }] = ids.length ? await Promise.all([
-    ctx.supabase.from("lancamentos").select("contrato_id, valor, realizado, categoria, excluido_em").in("contrato_id", ids),
-    ctx.supabase.from("estoque_movimentos").select("contrato_id, tipo, quantidade, custo_unit").in("contrato_id", ids),
-  ]) : [{ data: [] }, { data: [] }];
-  const lucro = lucratividade(ks ?? [], lancs ?? [], movs ?? []);
+  const vend = sp.v && /^[0-9a-f-]{36}$/i.test(sp.v) ? sp.v : null;
+  // tudo somado no banco: não depende de quantos orçamentos a loja tem
+  const [{ data: d }, { data: fat }, { data: ms }, { data: lr }] = await Promise.all([
+    ctx.supabase.rpc("dashboard_orcamentos", { p_empresa: eid, p_desde: desde, p_vendedor: vend }),
+    ctx.supabase.rpc("faturado_por_mes", { p_empresa: eid, p_desde: desde, p_vendedor: vend }),
+    ctx.supabase.from("membros").select("user_id, nome").eq("empresa_id", eid).order("nome"),
+    ctx.financeiro ? ctx.supabase.rpc("lucro_resumo", { p_empresa: eid, p_de: desde, p_ate: new Date(Date.now() + 864e5).toISOString(), p_minima: 0 }) : Promise.resolve({ data: null }),
+  ]);
+  const D = (d ?? {}) as any;
+  const n = (k: string) => Number(D[k] ?? 0);
+  const total = n("total"), ganhos = n("ganhos"), perdidos = n("perdidos"), pend = n("pendentes");
+  const valorTotal = n("valor_total"), valorGanhos = n("valor_ganhos");
+  const LR = (lr ?? null) as any;
+  const vplT = Number(LR?.vpl ?? 0), lucroT = vplT - Number(LR?.custo ?? 0), qtdLucro = Number(LR?.qtd ?? 0);
 
-  const L = (orcs ?? []) as any[];
-  const valor = (o: any) => Number(o.contratos?.[0]?.valor_total ?? o.calculo?.valorProposta ?? 0);
-  const ganhos = L.filter((o) => o.status === "fechado"), perdidos = L.filter((o) => o.status === "perdido"), pend = L.filter((o) => ["rascunho", "apresentado"].includes(o.status));
-  const soma = (a: any[]) => a.reduce((s, o) => s + valor(o), 0);
-  const media = (a: number[]) => (a.length ? Math.round(a.reduce((s, x) => s + x, 0) / a.length) : 0);
-  const dias = (a: any[], campo: string) => media(a.filter((o) => o[campo]).map((o) => (new Date(o[campo]).getTime() - new Date(o.created_at).getTime()) / 864e5));
-  const vplT = lucro.reduce((a, l) => a + l.vpl, 0), lucroT = lucro.reduce((a, l) => a + l.lucro, 0);
-
-  const status: [string, number, string][] = [["Em elaboração", L.filter((o) => o.status === "rascunho").length, "var(--muted)"], ["Apresentados", L.filter((o) => o.status === "apresentado").length, "var(--info)"],
-    ["Faturados", ganhos.length, "var(--good)"], ["Perdidos", perdidos.length, "var(--bad)"]];
+  const status: [string, number, string][] = [["Em elaboração", n("rascunho"), "var(--muted)"], ["Apresentados", n("apresentado"), "var(--info)"],
+    ["Faturados", ganhos, "var(--good)"], ["Perdidos", perdidos, "var(--bad)"]];
   const maxS = Math.max(1, ...status.map((s) => s[1]));
+  const F = (fat ?? {}) as Record<string, number>;
   const hist: [string, number][] = [];
+  const [ay, am] = hojeISO().split("-").map(Number);
   for (let i = meses - 1; i >= 0; i--) {
-    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
-    const chave = d.toISOString().slice(0, 7);
-    hist.push([d.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }), (ks ?? []).filter((k: any) => k.created_at.slice(0, 7) === chave).reduce((a: number, k: any) => a + Number(k.valor_total), 0)]);
+    const dt = new Date(Date.UTC(ay, am - 1 - i, 1));
+    const chave = dt.toISOString().slice(0, 7);
+    hist.push([dt.toLocaleDateString("pt-BR", { month: "short", year: "2-digit", timeZone: "UTC" }), Number(F[chave] ?? 0)]);
   }
   const maxH = Math.max(1, ...hist.map((h) => h[1]));
   return (
@@ -52,18 +50,18 @@ export default async function DashOrc({ searchParams }: { searchParams: Promise<
         <button className="btn">Aplicar</button>
       </form>
       <div className="grid kpis">
-        <div className="panel kpi"><div className="l">Total de orçamentos</div><div className="v">{L.length}</div><div className="s">Ganhos {ganhos.length} · Perdidos {perdidos.length} · Pendentes {pend.length}</div></div>
-        <div className="panel kpi"><div className="l">Total em valores</div><div className="v">{brl(soma(L))}</div><div className="s">Ganhos {brl(soma(ganhos))}</div></div>
-        <div className="panel kpi"><div className="l">Tempo médio até ganhar</div><div className="v">{dias(ganhos, "faturado_em")} dias</div><div className="s">Até perder: {dias(perdidos, "perdido_em")} dias</div></div>
-        <div className="panel kpi"><div className="l">Ticket médio</div><div className="v">{brl(ganhos.length ? soma(ganhos) / ganhos.length : 0)}</div>
-          <div className="s">Conversão {pct(L.length ? ganhos.length / L.length : 0)} em quantidade · {pct(soma(L) ? soma(ganhos) / soma(L) : 0)} em valor</div></div>
+        <div className="panel kpi"><div className="l">Total de orçamentos</div><div className="v">{total}</div><div className="s">Ganhos {ganhos} · Perdidos {perdidos} · Pendentes {pend}</div></div>
+        <div className="panel kpi"><div className="l">Total em valores</div><div className="v">{brl(valorTotal)}</div><div className="s">Ganhos {brl(valorGanhos)}</div></div>
+        <div className="panel kpi"><div className="l">Tempo médio até ganhar</div><div className="v">{n("dias_ganho")} dias</div><div className="s">Até perder: {n("dias_perda")} dias</div></div>
+        <div className="panel kpi"><div className="l">Ticket médio</div><div className="v">{brl(ganhos ? valorGanhos / ganhos : 0)}</div>
+          <div className="s">Conversão {pct(total ? ganhos / total : 0)} em quantidade · {pct(valorTotal ? valorGanhos / valorTotal : 0)} em valor</div></div>
       </div>
-      <div className="panel mt" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", borderLeft: "4px solid var(--accent)" }}>
+      {ctx.financeiro && <div className="panel mt" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", borderLeft: "4px solid var(--accent)" }}>
         <div><div className="note">Margem real dos faturados no período</div>
           <div className="num" style={{ fontSize: 22, fontWeight: 600 }}>{vplT > 0 ? pct(lucroT / vplT) : "n/a"}</div>
-          <div className="note">{lucro.length ? `${brl(lucroT)} de lucro sobre ${brl(vplT)} de VPL em ${lucro.length} contrato(s)` : "nenhum orçamento faturado no período"}</div></div>
+          <div className="note">{qtdLucro ? `${brl(lucroT)} de lucro sobre ${brl(vplT)} de VPL em ${qtdLucro} contrato(s)${vend ? " (loja toda)" : ""}` : "nenhum orçamento faturado no período"}</div></div>
         <Link className="btn primary" href="/lucratividade">Ver lucratividade</Link>
-      </div>
+      </div>}
       <div className="grid two mt">
         <div className="panel"><h2>Status dos orçamentos</h2>
           {status.map(([n, v, c]) => <div key={n} style={{ margin: "10px 0" }}><div className="row" style={{ padding: 0 }}><span>{n}</span><span className="num">{v}</span></div>

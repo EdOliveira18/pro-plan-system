@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { contexto } from "@/lib/contexto";
 import { criarOP } from "../acoes";
+import { hojeISO, dataHora, somaDias } from "@/lib/tempo";
 
 export default async function NovaOP({ searchParams }: { searchParams: Promise<{ contrato?: string; erro?: string; fim?: string }> }) {
   const sp = await searchParams;
@@ -11,7 +12,7 @@ export default async function NovaOP({ searchParams }: { searchParams: Promise<{
     ctx.supabase.from("pessoas").select("id, nome, funcao").eq("empresa_id", eid).eq("categoria", "funcionario").eq("status", "ativo").order("nome"),
     ctx.supabase.from("tipos_servico").select("id, nome").eq("empresa_id", eid).order("nome"),
   ]);
-  const hoje = new Date().toISOString().slice(0, 10);
+  const hoje = hojeISO();
   return (<>
     <nav className="migalha">Produção › Ordens de produção › Adicionar</nav>
     <div className="head"><div><h1>Nova ordem de produção</h1><p className="sub">A OP entra na coluna Agendada do kanban</p></div></div>

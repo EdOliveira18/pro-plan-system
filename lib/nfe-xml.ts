@@ -17,8 +17,12 @@ export function lerNFe(xml: string): NFeCompra {
     codigo: String(d.prod?.cProd ?? ""), nome: String(d.prod?.xProd ?? ""), ncm: String(d.prod?.NCM ?? ""), cfop: String(d.prod?.CFOP ?? ""),
     unidade: String(d.prod?.uCom ?? "UN").toUpperCase(), quantidade: n(d.prod?.qCom), valorUnit: n(d.prod?.vUnCom), valorTotal: n(d.prod?.vProd),
   }));
+  const numero = String(inf.ide?.nNF ?? ""), serie = String(inf.ide?.serie ?? "");
+  const emit = String(inf.emit?.CNPJ ?? inf.emit?.CPF ?? "");
+  // sem chave no XML (arquivo incompleto) usa emitente + série + número, para a mesma nota não entrar duas vezes
+  const chaveFinal = chave || `SEM-CHAVE-${emit}-${serie}-${numero}`;
   return {
-    chave, numero: String(inf.ide?.nNF ?? ""), serie: String(inf.ide?.serie ?? ""),
+    chave: chaveFinal, numero, serie,
     emissao: String(inf.ide?.dhEmi ?? inf.ide?.dEmi ?? "").slice(0, 10) || null,
     emitenteNome: String(inf.emit?.xFant ?? inf.emit?.xNome ?? ""), emitenteCnpj: String(inf.emit?.CNPJ ?? inf.emit?.CPF ?? ""),
     destCnpj: String(inf.dest?.CNPJ ?? inf.dest?.CPF ?? ""),

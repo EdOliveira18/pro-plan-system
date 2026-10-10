@@ -14,7 +14,8 @@ async function criar(fd: FormData) {
     p_cnpj: formatarCNPJ(cnpj),
     p_nome_usuario: String(fd.get("seu_nome") ?? ""),
   });
-  if (error) redirect("/onboarding?erro=" + encodeURIComponent(error.message.includes("empresas_cnpj_unico") ? "Esse CNPJ já tem conta no sistema. Peça ao dono para te cadastrar na Equipe." : error.message));
+  if (error) redirect("/onboarding?erro=" + encodeURIComponent(error.message.includes("LIMITE_EMPRESAS") ? "Você já tem 3 empresas cadastradas. Para mais, fale com o suporte." :
+    error.message.includes("empresas_cnpj_unico") ? "Esse CNPJ já está cadastrado no sistema. Se a empresa é sua, fale com o suporte para liberar." : "Não foi possível criar a empresa: " + error.message));
   // dados fiscais da Receita já entram no cadastro (razão social, endereço, regime)
   const d = await consultarCNPJ(cnpj);
   if (d) {
@@ -32,7 +33,6 @@ export default async function Onboarding({ searchParams }: { searchParams: Promi
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
   if (!sp.nova) {
-    await supabase.rpc("aceitar_convites");
     const { count } = await supabase.from("membros").select("*", { count: "exact", head: true }).eq("user_id", user.id);
     if (count) redirect("/dashboard");
   }
@@ -41,6 +41,7 @@ export default async function Onboarding({ searchParams }: { searchParams: Promi
       <div className="panel">
         <h1 style={{ fontSize: 22 }}>Cadastre sua empresa</h1>
         <p className="sub" style={{ marginBottom: 16 }}>Tudo que você criar fica separado por empresa. Depois dá para adicionar outros CNPJs.</p>
+        {!sp.nova && <p className="note" style={{ marginTop: -8 }}>Foi convidado por uma loja? Não cadastre empresa: abra o link do convite que recebeu.</p>}
         {sp.erro && <div className="erro">{sp.erro}</div>}
         <form action={criar} className="grid" style={{ gap: 12 }}>
           <label>Seu nome<input name="seu_nome" required defaultValue={String(user.user_metadata?.nome ?? "")} /></label>

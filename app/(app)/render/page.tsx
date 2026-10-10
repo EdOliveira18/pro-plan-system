@@ -9,18 +9,21 @@ export default async function Render({ searchParams }: { searchParams: Promise<{
   const sp = await searchParams;
   const ctx = await contexto();
   const sb = ctx.supabase;
-  const [{ data: contratos }, { data: renders }] = await Promise.all([
+  const [{ data: contratos }, { data: renders }, { count: usados }] = await Promise.all([
     sb.from("contratos").select("id, codigo, cliente:clientes(nome)").eq("empresa_id", ctx.empresa.id).order("created_at", { ascending: false }).limit(200),
     sb.from("renders").select("*, contrato:contratos(codigo), origem:arquivos!renders_origem_arquivo_id_fkey(storage_path), resultado:arquivos!renders_resultado_arquivo_id_fkey(storage_path)")
       .eq("empresa_id", ctx.empresa.id).order("created_at", { ascending: false }).limit(60),
+    sb.rpc("renders_no_mes", { p_empresa: ctx.empresa.id }).then((r) => ({ count: Number(r.data ?? 0) })),
   ]);
+  const limite = Number(ctx.empresa.limite_renders ?? 20);
   const caminhos = (renders ?? []).flatMap((r: any) => [r.origem?.storage_path, r.resultado?.storage_path]).filter(Boolean);
   const { data: urls } = caminhos.length ? await sb.storage.from("arquivos").createSignedUrls(caminhos, 3600) : { data: [] as any[] };
   const url = (p?: string) => (p ? (urls ?? []).find((u: any) => u.path === p)?.signedUrl : undefined);
 
   return (
     <>
-      <div className="head"><div><h1>Render Pro</h1><p className="sub">Planta de arquiteto ou vista do Promob em imagem 3D fotorrealista, salva no contrato</p></div></div>
+      <div className="head"><div><h1>Render Pro</h1><p className="sub">Planta de arquiteto ou vista do Promob em imagem 3D fotorrealista, salva no contrato</p></div>
+        <span className={"pill " + ((usados ?? 0) >= limite ? "p-bad" : "p-neu")}>{usados ?? 0} de {limite} renders neste mês</span></div>
       <NovoRender empresaId={ctx.empresa.id} contratoInicial={sp.contrato ?? ""} contratos={(contratos ?? []).map((c: any) => ({ id: c.id, rotulo: `#${c.codigo} · ${c.cliente?.nome ?? ""}` }))} />
       <div className="galeria mt">
         {(renders ?? []).map((r: any) => (

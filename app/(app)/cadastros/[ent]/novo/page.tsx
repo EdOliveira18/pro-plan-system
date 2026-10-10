@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { entidade } from "@/lib/cadastros";
+import { contexto as ctxPapel, exigir } from "@/lib/contexto";
 import Formulario from "../../Formulario";
 
 export default async function Novo({ params, searchParams }: { params: Promise<{ ent: string }>; searchParams: Promise<{ erro?: string }> }) {
@@ -8,6 +9,7 @@ export default async function Novo({ params, searchParams }: { params: Promise<{
   const sp = await searchParams;
   const e = entidade(ent);
   if (!e) notFound();
+  { const c0 = await ctxPapel(); exigir(c0, c0.papel !== "montador" || e.slug === "ferramentas"); }
   const Nome = e.singular[0].toUpperCase() + e.singular.slice(1);
   return (
     <>

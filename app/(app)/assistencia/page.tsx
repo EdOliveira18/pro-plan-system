@@ -3,17 +3,24 @@ import { contexto } from "@/lib/contexto";
 import { data } from "@/lib/formato";
 import { ST_AT, STATUS_AT, MOD, MODALIDADES } from "@/lib/assistencia";
 import NavAT from "./NavAT";
+import Paginacao, { pagina } from "@/components/Paginacao";
+import { idsContratos, juntarOr, limparTermo } from "@/lib/busca";
 
-export default async function Assistencias({ searchParams }: { searchParams: Promise<{ q?: string; s?: string; m?: string; msg?: string }> }) {
+export default async function Assistencias({ searchParams }: { searchParams: Promise<{ q?: string; s?: string; m?: string; msg?: string; pag?: string }> }) {
   const sp = await searchParams;
   const ctx = await contexto();
-  let q = ctx.supabase.from("chamados").select("id, numero, status, modalidade, agendado_para, hora_visita, aberto_em, descricao, responsavel, contrato:contratos(id, codigo, cliente:clientes(nome))")
-    .eq("empresa_id", ctx.empresa.id).order("numero", { ascending: false }).limit(1000);
+  let q = ctx.supabase.from("chamados").select("id, numero, status, modalidade, agendado_para, hora_visita, aberto_em, descricao, responsavel, contrato:contratos(id, codigo, cliente:clientes(nome))", { count: "exact" })
+    .eq("empresa_id", ctx.empresa.id);
+  const pg = pagina(sp.pag);
+  const t = limparTermo(sp.q);
+  if (t) {
+    const ks = await idsContratos(ctx.supabase, ctx.empresa.id, t);
+    q = q.or(juntarOr([/^\d{1,9}$/.test(t) && `numero.eq.${t}`, ks.length && `contrato_id.in.(${ks.join(",")})`, `descricao.ilike.%${t}%`]));
+  }
   if (sp.s) q = q.eq("status", sp.s);
   if (sp.m) q = q.eq("modalidade", sp.m);
-  const { data: rows } = await q;
-  const t = (sp.q ?? "").toLowerCase().trim();
-  const lista = ((rows ?? []) as any[]).filter((c) => !t || [String(c.numero), c.contrato?.cliente?.nome, c.contrato?.codigo].some((x) => String(x ?? "").toLowerCase().includes(t)));
+  const { data: rows, count } = await q.order("numero", { ascending: false }).range(pg.de, pg.ate);
+  const lista = (rows ?? []) as any[];
   return (<>
     <div className="head"><div><h1>Assistências Técnicas</h1><p className="sub">Gerencie todas as assistências técnicas, sempre ligadas ao contrato do cliente</p></div><Link className="btn primary" href="/assistencia/nova">Cadastrar</Link></div>
     <NavAT atual="/assistencia" />
@@ -37,7 +44,7 @@ export default async function Assistencias({ searchParams }: { searchParams: Pro
           </tr>))}</tbody>
       </table></div>
       {!lista.length && <div className="vazio"><b>Nenhuma assistência técnica encontrada.</b></div>}
-      <div className="cad-rod note">Mostrando {lista.length} registro(s)</div>
+      <Paginacao total={count ?? 0} pag={pg.pag} base="/assistencia" params={sp} />
     </div>
   </>);
 }

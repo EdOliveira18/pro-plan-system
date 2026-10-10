@@ -1,7 +1,7 @@
+import { hojeISO } from "./tempo";
 // Mês de referência vindo da URL (?mes=2026-10), com início e fim para filtrar no banco
 export function periodo(mes?: string) {
-  const hoje = new Date();
-  const [a, m] = (mes && /^\d{4}-\d{2}$/.test(mes) ? mes : `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`).split("-").map(Number);
+  const [a, m] = (mes && /^\d{4}-\d{2}$/.test(mes) ? mes : hojeISO().slice(0, 7)).split("-").map(Number);
   const ini = new Date(Date.UTC(a, m - 1, 1));
   const fim = new Date(Date.UTC(a, m, 1));
   const iso = (d: Date) => d.toISOString().slice(0, 10);

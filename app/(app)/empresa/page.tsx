@@ -9,6 +9,7 @@ import { lerCertificadoA1 } from "@/lib/certificado";
 import { cifrar } from "@/lib/cripto";
 import { data } from "@/lib/formato";
 import { pendenciasFiscais, REGIMES, UFS } from "@/lib/fiscal";
+import { hojeISO, dataHora, somaDias } from "@/lib/tempo";
 
 const ir = (q: string) => { revalidatePath("/empresa"); revalidatePath("/notas"); redirect("/empresa?" + q); };
 const txt = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim() || null;
@@ -51,7 +52,7 @@ async function salvar(fd: FormData) {
     let info;
     try { info = lerCertificadoA1(bytes, senha); } catch (e) { return ir("erro=" + encodeURIComponent((e as Error).message)); }
     if (info.cnpj && limparCNPJ(cnpj) !== info.cnpj) return ir("erro=" + encodeURIComponent(`Esse certificado é do CNPJ ${formatarCNPJ(info.cnpj)}, diferente do CNPJ da empresa.`));
-    if (info.validoAte < new Date()) return ir("erro=" + encodeURIComponent(`Esse certificado venceu em ${info.validoAte.toLocaleDateString("pt-BR")}.`));
+    if (info.validoAte < new Date()) return ir("erro=" + encodeURIComponent(`Esse certificado venceu em ${info.validoAte.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}.`));
     let senhaCifrada: string;
     try { senhaCifrada = cifrar(senha); } catch (e) { return ir("erro=" + encodeURIComponent((e as Error).message)); }
     const caminho = `${ctx.empresa.id}/a1.pfx`;
@@ -59,7 +60,7 @@ async function salvar(fd: FormData) {
     if (up.error) return ir("erro=" + encodeURIComponent("Não foi possível guardar o certificado: " + up.error.message));
     const e3 = await ctx.supabase.from("certificados").upsert({
       empresa_id: ctx.empresa.id, storage_path: caminho, senha_cifrada: senhaCifrada, titular: info.titular, cnpj: info.cnpj,
-      valido_ate: info.validoAte.toISOString().slice(0, 10), enviado_por: ctx.userId, enviado_em: new Date().toISOString(),
+      valido_ate: hojeISO(info.validoAte), enviado_por: ctx.userId, enviado_em: new Date().toISOString(),
     });
     if (e3.error) return ir("erro=" + encodeURIComponent(e3.error.message));
   }

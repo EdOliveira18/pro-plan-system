@@ -2,28 +2,36 @@ import Link from "next/link";
 import { contexto } from "@/lib/contexto";
 import { brl, data, ETAPAS_WF } from "@/lib/formato";
 import NavOrc from "../NavOrc";
+import Paginacao, { pagina } from "@/components/Paginacao";
+import { filtroOrcamentos, limparTermo, inicioDia, fimDia } from "@/lib/busca";
 
-export default async function Faturados({ searchParams }: { searchParams: Promise<{ q?: string; de?: string; ate?: string }> }) {
+export default async function Faturados({ searchParams }: { searchParams: Promise<{ q?: string; de?: string; ate?: string; pag?: string }> }) {
   const sp = await searchParams;
   const ctx = await contexto();
-  let q = ctx.supabase.from("orcamentos").select("id, numero, nome_projeto, faturado_em, data_entrega, calculo, cliente:clientes(nome), contratos(id, codigo, valor_total, etapa_workflow)")
-    .eq("empresa_id", ctx.empresa.id).eq("status", "fechado").order("faturado_em", { ascending: false }).limit(1000);
-  if (sp.de) q = q.gte("faturado_em", sp.de);
-  if (sp.ate) q = q.lte("faturado_em", sp.ate + "T23:59:59");
-  const { data: rows } = await q;
-  const t = (sp.q ?? "").toLowerCase().trim();
-  const lista = ((rows ?? []) as any[]).filter((o) => !t || [o.cliente?.nome, o.nome_projeto, String(o.numero), o.contratos?.[0]?.codigo].some((x) => String(x ?? "").toLowerCase().includes(t)));
+  const pg = pagina(sp.pag);
+  const de = /^\d{4}-\d{2}-\d{2}$/.test(sp.de ?? "") ? sp.de! : "", ate = /^\d{4}-\d{2}-\d{2}$/.test(sp.ate ?? "") ? sp.ate! : "";
+  let q = ctx.supabase.from("orcamentos").select("id, numero, nome_projeto, faturado_em, data_entrega, calculo, cliente:clientes(nome), contratos(id, codigo, valor_total, etapa_workflow)", { count: "exact" })
+    .eq("empresa_id", ctx.empresa.id).eq("status", "fechado");
+  if (de) q = q.gte("faturado_em", inicioDia(de));
+  if (ate) q = q.lte("faturado_em", fimDia(ate));
+  const filtro = await filtroOrcamentos(ctx.supabase, ctx.empresa.id, sp.q ?? "");
+  if (filtro) q = q.or(filtro);
+  const [{ data: rows, count }, { data: res }] = await Promise.all([
+    q.order("faturado_em", { ascending: false }).order("id").range(pg.de, pg.ate),
+    ctx.supabase.rpc("resumo_orcamentos_f", { p_empresa: ctx.empresa.id, p_status: ["fechado"], p_de: de || null, p_ate: ate || null, p_termo: limparTermo(sp.q) || null }),
+  ]);
+  const lista = (rows ?? []) as any[];
   const valor = (o: any) => Number(o.contratos?.[0]?.valor_total ?? o.calculo?.valorProposta ?? 0);
-  const total = lista.reduce((a, o) => a + valor(o), 0);
+  const qtd = Number((res as any)?.qtd ?? 0), total = Number((res as any)?.valor ?? 0);
   const wf = Object.fromEntries(ETAPAS_WF);
   return (
     <>
       <div className="head"><div><h1>Orçamentos Faturados</h1><p className="sub">Todos os orçamentos que viraram contrato</p></div></div>
       <NavOrc atual="/comercial/faturados" />
       <div className="grid k3" style={{ marginBottom: 16 }}>
-        <div className="panel kpi kcard"><span className="tg p-good">Total</span><div className="v">{lista.length}</div><div className="l">Orçamentos faturados</div></div>
+        <div className="panel kpi kcard"><span className="tg p-good">Total</span><div className="v">{qtd}</div><div className="l">Orçamentos faturados</div></div>
         <div className="panel kpi kcard"><span className="tg p-good">Faturamento</span><div className="v">{brl(total)}</div><div className="l">Valor total</div></div>
-        <div className="panel kpi kcard"><span className="tg p-info">Média</span><div className="v">{brl(lista.length ? total / lista.length : 0)}</div><div className="l">Ticket médio</div></div>
+        <div className="panel kpi kcard"><span className="tg p-info">Média</span><div className="v">{brl(qtd ? total / qtd : 0)}</div><div className="l">Ticket médio</div></div>
       </div>
       <div className="panel" style={{ padding: 0 }}>
         <form className="cad-busca"><input name="q" defaultValue={sp.q ?? ""} placeholder="Buscar contrato, cliente ou número" style={{ flex: 1 }} aria-label="Buscar" />
@@ -42,7 +50,7 @@ export default async function Faturados({ searchParams }: { searchParams: Promis
             </tr>); })}</tbody>
         </table></div>
         {!lista.length && <div className="vazio"><b>Nenhum orçamento faturado encontrado.</b></div>}
-        <div className="cad-rod note">Mostrando {lista.length} registro(s)</div>
+        <Paginacao total={count ?? 0} pag={pg.pag} base="/comercial/faturados" params={sp} />
       </div>
     </>
   );

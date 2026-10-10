@@ -2,8 +2,9 @@ export const brl = (v: number | string | null | undefined) =>
   (Number(v) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 export const pct = (v: number) => (v * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + "%";
 export const dec = (v: number, casas = 2) => v.toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
+// datas só com dia (AAAA-MM-DD) não mudam de fuso; carimbos com hora são mostrados no horário de Brasília
 export const data = (v: string | Date | null | undefined) =>
-  v ? new Date(typeof v === "string" && v.length === 10 ? v + "T12:00:00" : v).toLocaleDateString("pt-BR") : "";
+  v ? (typeof v === "string" && v.length === 10 ? new Date(v + "T12:00:00Z").toLocaleDateString("pt-BR", { timeZone: "UTC" }) : new Date(v).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })) : "";
 
 export const MARCOS: Record<string, string> = {
   medicao: "Medição",

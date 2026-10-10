@@ -2,6 +2,7 @@ import Link from "next/link";
 import { contexto } from "@/lib/contexto";
 import { data } from "@/lib/formato";
 import NavProd from "../NavProd";
+import { hojeISO, dataHora, somaDias } from "@/lib/tempo";
 
 // Contratos que ainda não têm ordem de produção
 export default async function Pendentes({ searchParams }: { searchParams: Promise<{ aba?: string; q?: string }> }) {
@@ -12,7 +13,7 @@ export default async function Pendentes({ searchParams }: { searchParams: Promis
     ctx.supabase.from("ordens_producao").select("contrato_id").eq("empresa_id", ctx.empresa.id).neq("status", "cancelada"),
   ]);
   const comOP = new Set((ops ?? []).map((o: any) => o.contrato_id));
-  const hoje = new Date().toISOString().slice(0, 10);
+  const hoje = hojeISO();
   const entrega = (k: any) => (k.marcos ?? []).find((m: any) => m.tipo === "conclusao")?.previsto_em ?? null;
   const t = (sp.q ?? "").toLowerCase().trim();
   const todos = ((ks ?? []) as any[]).filter((k) => !comOP.has(k.id) && (!t || [k.codigo, k.cliente?.nome].some((x) => String(x ?? "").toLowerCase().includes(t))));

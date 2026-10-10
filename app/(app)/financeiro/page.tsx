@@ -8,6 +8,7 @@ import SeletorMes from "@/components/SeletorMes";
 import { importarOFX, vincular, criarDaMovimentacao, ignorar, desfazer, reconciliar, sincronizarAgora } from "./banco-actions";
 import ConectarBanco from "@/components/ConectarBanco";
 import { sugerir } from "@/lib/banco/conciliar";
+import { hojeISO, dataHora, somaDias } from "@/lib/tempo";
 
 const ABAS: [string, string][] = [["fluxo", "Fluxo de caixa"], ["banco", "Banco e conciliação"], ["contratos", "DRE por contrato"], ["comissoes", "Comissões"], ["fiscal", "Fiscal"]];
 const CATEGORIAS = ["recebimento", "fabrica", "frete", "montagem", "comissao_loja", "comissao_rt", "imposto", "taxa", "aluguel", "salarios", "marketing", "despesa_fixa", "outros"];
@@ -30,7 +31,7 @@ async function novoLanc(mes: string, fd: FormData) {
 async function alternar(mes: string, id: string, realizado: boolean) {
   "use server";
   const ctx = await contexto();
-  const { error } = await ctx.supabase.from("lancamentos").update({ realizado, pago_em: realizado ? new Date().toISOString().slice(0, 10) : null }).eq("id", id);
+  const { error } = await ctx.supabase.from("lancamentos").update({ realizado, pago_em: realizado ? hojeISO() : null }).eq("id", id);
   ir("fluxo", mes, error?.message);
 }
 async function novaNota(mes: string, fd: FormData) {
@@ -56,7 +57,7 @@ export default async function Financeiro({ searchParams }: { searchParams: Promi
   const ctx = await contexto();
   const sb = ctx.supabase;
   const eid = ctx.empresa.id;
-  const hoje = new Date().toISOString().slice(0, 10);
+  const hoje = hojeISO();
   const { data: contratos } = await sb.from("contratos").select("id, codigo, data_venda, valor_total, vpl, custo_previsto, lucro_previsto, vendedor_id, parceiro_id, cliente:clientes(nome), parceiro:parceiros(nome, rt_pct)").eq("empresa_id", eid).order("created_at", { ascending: false }).limit(500);
   const K = (contratos ?? []) as any[];
   let corpo: React.ReactNode = null;
@@ -146,7 +147,7 @@ export default async function Financeiro({ searchParams }: { searchParams: Promi
           <h2 className="mt">Open Finance <span className="note">CNPJ {ctx.empresa.cnpj ?? "não cadastrado"}</span></h2>
           {(conexoes ?? []).map((cx: any) => (
             <div key={cx.id} className="row" style={{ alignItems: "center" }}>
-              <span><b>{cx.instituicao ?? "Banco"}</b><br /><span className="note">{cx.ultimo_sync ? "Sincronizado " + new Date(cx.ultimo_sync).toLocaleString("pt-BR") : "Aguardando primeira sincronização"}</span>
+              <span><b>{cx.instituicao ?? "Banco"}</b><br /><span className="note">{cx.ultimo_sync ? "Sincronizado " + dataHora(cx.ultimo_sync) : "Aguardando primeira sincronização"}</span>
                 {cx.erro && <><br /><span className="pill p-bad">{cx.erro}</span></>}</span>
               <span style={{ display: "flex", gap: 6 }}>
                 <form action={sincronizarAgora.bind(null, cx.id)}><button className="btn sm">Atualizar agora</button></form>

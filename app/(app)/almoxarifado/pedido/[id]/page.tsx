@@ -10,10 +10,10 @@ export default async function Pedido({ params, searchParams }: { params: Promise
   const sp = await searchParams;
   const ctx = await contexto();
   const { data: p } = await ctx.supabase.from("pedidos_estoque")
-    .select("*, fornecedor:pessoas(nome, nome_fantasia), contrato:contratos(id, codigo, cliente:clientes(nome)), natureza:naturezas(nome, cfop_estadual), pedido_itens(id, quantidade, valor_unit, produto:produtos(codigo, nome, unid_producao, estoque, valor_final))")
+    .select("*, fornecedor:pessoas(nome, nome_fantasia), contrato:contratos(id, codigo, cliente:clientes(nome)), natureza:naturezas(nome, cfop_estadual), pedido_itens(id, quantidade, valor_unit, produto:produtos(codigo, nome, unid_producao, unid_compra, fator_conversao, estoque, valor_final))")
     .eq("id", id).eq("empresa_id", ctx.empresa.id).maybeSingle();
   if (!p) notFound();
-  const { data: prods } = await ctx.supabase.from("produtos").select("id, codigo, nome, estoque, unid_producao, valor_compra").eq("empresa_id", ctx.empresa.id).is("excluido_em", null).order("nome");
+  const { data: prods } = await ctx.supabase.from("produtos").select("id, codigo, nome, estoque, unid_producao, unid_compra, fator_conversao, valor_compra").eq("empresa_id", ctx.empresa.id).is("excluido_em", null).order("nome");
   const aberto = p.status === "aberto";
   const itens = (p.pedido_itens ?? []) as any[];
   const unit = (i: any) => (p.tipo === "saida" ? Number(i.produto?.valor_final) : Number(i.valor_unit));
@@ -32,7 +32,8 @@ export default async function Pedido({ params, searchParams }: { params: Promise
         <tbody>{itens.map((i) => (
           <tr key={i.id}>
             <td className="num">{i.produto?.codigo}</td><td>{i.produto?.nome}</td>
-            <td className="r num">{String(Number(i.quantidade)).replace(".", ",")} {i.produto?.unid_producao}</td>
+            <td className="r num">{String(Number(i.quantidade)).replace(".", ",")} {p.tipo === "compra" ? i.produto?.unid_compra : i.produto?.unid_producao}
+              {p.tipo === "compra" && Number(i.produto?.fator_conversao) > 0 && Number(i.produto?.fator_conversao) !== 1 && <div className="note">= {String(Number(i.quantidade) * Number(i.produto?.fator_conversao)).replace(".", ",")} {i.produto?.unid_producao} no estoque</div>}</td>
             {p.tipo === "saida" && aberto && <td className="r num" style={{ color: Number(i.produto?.estoque) < Number(i.quantidade) ? "var(--bad)" : undefined }}>{String(Number(i.produto?.estoque)).replace(".", ",")}</td>}
             <td className="r num">{brl(unit(i))}</td><td className="r num">{brl(Number(i.quantidade) * unit(i))}</td>
             {aberto && <td className="r"><form action={removerItem.bind(null, id, i.id)}><button className="btn sm">Remover</button></form></td>}
@@ -43,8 +44,8 @@ export default async function Pedido({ params, searchParams }: { params: Promise
       {aberto && (
         <form action={adicionarItem.bind(null, id)} className="cad-busca" style={{ borderTop: "1px solid var(--line)", borderBottom: 0 }}>
           <select name="produto_id" required defaultValue="" style={{ flex: 2, minWidth: 220 }} aria-label="Produto"><option value="">Escolha o produto</option>
-            {(prods ?? []).map((x: any) => <option key={x.id} value={x.id}>{x.codigo} · {x.nome} (estoque {String(Number(x.estoque)).replace(".", ",")} {x.unid_producao})</option>)}</select>
-          <input name="quantidade" inputMode="decimal" placeholder="Quantidade" required style={{ width: 120 }} aria-label="Quantidade" />
+            {(prods ?? []).map((x: any) => <option key={x.id} value={x.id}>{x.codigo} · {x.nome} (estoque {String(Number(x.estoque)).replace(".", ",")} {x.unid_producao}{p.tipo === "compra" && x.unid_compra !== x.unid_producao ? `; compra em ${x.unid_compra}, 1 ${x.unid_compra} = ${String(Number(x.fator_conversao)).replace(".", ",")} ${x.unid_producao}` : ""})</option>)}</select>
+          <input name="quantidade" inputMode="decimal" placeholder={p.tipo === "compra" ? "Qtd. (unid. de compra)" : "Qtd. (unid. de produção)"} required style={{ width: 170 }} aria-label="Quantidade" />
           {p.tipo === "compra" && <input name="valor_unit" inputMode="decimal" placeholder="Valor unit. (opcional)" style={{ width: 170 }} aria-label="Valor unitário" />}
           <button className="btn">Adicionar item</button>
           <Link className="note" href="/cadastros/produtos/novo" style={{ alignSelf: "center" }}>+ Novo produto</Link>

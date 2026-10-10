@@ -4,6 +4,7 @@ import { contexto } from "@/lib/contexto";
 import { brl, pct, data, diasAte, MARCOS, ETAPAS_WF, ASSINATURA } from "@/lib/formato";
 import EnviarArquivo from "@/components/EnviarArquivo";
 import { concluirMarco, avancarWorkflow, marcarAssinatura, marcarRealizado, novoLancamento, importarRevisao, abrirChamado } from "./actions";
+import { hojeISO, dataHora, somaDias } from "@/lib/tempo";
 
 const ABAS: [string, string][] = [["linha", "Linha do tempo"], ["financeiro", "Financeiro e DRE"], ["arquivos", "Arquivos e renders"], ["revisao", "Diff pós-medição"], ["assistencia", "Assistência"]];
 const TIPO_ARQ: Record<string, string> = { planta: "Planta", promob: "Promob", projeto_imagem: "Imagem do projeto", foto_obra: "Foto da obra", foto_montagem: "Foto da montagem", contrato: "Contrato", render: "Render", documento: "Documento" };
@@ -11,8 +12,11 @@ const TIPO_ARQ: Record<string, string> = { planta: "Planta", promob: "Promob", p
 export default async function Contrato({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ aba?: string; erro?: string }> }) {
   const { id } = await params;
   const sp = await searchParams;
-  const aba = sp.aba ?? "linha";
   const ctx = await contexto();
+  const verValores = ctx.papel !== "montador";
+  // financeiro e diff de custo só para quem pode ver valores (financeiro: dono, gerente e financeiro)
+  const abasPermitidas = ABAS.filter(([a]) => (a === "financeiro" ? ctx.financeiro : a === "revisao" ? verValores : true));
+  const aba = abasPermitidas.some(([a]) => a === sp.aba) ? sp.aba! : "linha";
   const sb = ctx.supabase;
   const { data: c } = await sb.from("contratos").select("*, cliente:clientes(nome, telefone, endereco), campanha:campanhas(nome, investimento), parceiro:parceiros(nome)").eq("id", id).single();
   if (!c) notFound();
@@ -94,7 +98,7 @@ export default async function Contrato({ params, searchParams }: { params: Promi
             ))}</tbody>
           </table></div>
           <form action={novoLancamento.bind(null, id)} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 8, alignItems: "end", marginTop: 12 }}>
-            <label>Data<input name="data" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} /></label>
+            <label>Data<input name="data" type="date" required defaultValue={hojeISO()} /></label>
             <label>Descrição<input name="descricao" required /></label>
             <label>Tipo<select name="tipo"><option value="saida">Saída</option><option value="entrada">Entrada</option></select></label>
             <label>Categoria<select name="categoria">{["fabrica", "frete", "montagem", "comissao_rt", "comissao_loja", "imposto", "taxa", "recebimento", "outros"].map((c) => <option key={c}>{c}</option>)}</select></label>
@@ -200,20 +204,20 @@ export default async function Contrato({ params, searchParams }: { params: Promi
 
   return (
     <>
-      <div className="note" style={{ marginBottom: 6 }}><Link href="/clientes">Clientes</Link> / Contrato</div>
+      <div className="note" style={{ marginBottom: 6 }}>{verValores ? <Link href="/cadastros/clientes">Clientes</Link> : <Link href="/producao">Produção</Link>} / Contrato</div>
       <div className="head">
         <div><h1><span className="num">#{k.codigo}</span> · {k.cliente?.nome}</h1><p className="sub">{k.endereco_obra ?? "Endereço da obra não informado"}</p></div>
-        <div style={{ display: "flex", gap: 8 }}>{k.orcamento_id && <Link className="btn" href={`/comercial/${k.orcamento_id}`}>Ver orçamento</Link>}</div>
+        <div style={{ display: "flex", gap: 8 }}>{k.orcamento_id && verValores && <Link className="btn" href={`/comercial/${k.orcamento_id}`}>Ver orçamento</Link>}</div>
       </div>
       {sp.erro && <div className="erro">{sp.erro}</div>}
       <div className="grid kpis" style={{ marginBottom: 16 }}>
-        <div className="panel kpi"><div className="l">Valor do contrato</div><div className="v">{brl(k.valor_total)}</div><div className="s">{k.parcelas}x · {k.forma_pagamento}</div></div>
-        <div className="panel kpi"><div className="l">Lucro previsto</div><div className="v">{brl(k.lucro_previsto)}</div><div className="s">Margem {pct(Number(k.lucro_previsto) / Number(k.vpl))} sobre VPL {brl(k.vpl)}</div></div>
+        {verValores && <div className="panel kpi"><div className="l">Valor do contrato</div><div className="v">{brl(k.valor_total)}</div><div className="s">{k.parcelas}x · {k.forma_pagamento}</div></div>}
+        {ctx.financeiro && <div className="panel kpi"><div className="l">Lucro previsto</div><div className="v">{brl(k.lucro_previsto)}</div><div className="s">Margem {pct(Number(k.lucro_previsto) / Number(k.vpl))} sobre VPL {brl(k.vpl)}</div></div>}
         <div className="panel kpi"><div className="l">Marco atual</div><div className="v" style={{ fontSize: 17 }}>{k.encerrado ? "Concluído" : MARCOS[k.marco_atual]}</div><div className="s">Venda em {data(k.data_venda)}</div></div>
         <div className="panel kpi"><div className="l">Origem e parceiro</div><div className="v" style={{ fontSize: 15, fontFamily: "var(--f-body)" }}>{k.campanha?.nome ?? "Sem origem"}</div><div className="s">{k.parceiro ? `RT ${k.parceiro.nome}` : "Sem parceiro"}</div></div>
       </div>
       <div style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--line)", marginBottom: 16, overflowX: "auto" }}>
-        {ABAS.map(([a, n]) => <Link key={a} href={`/contratos/${id}?aba=${a}`} style={{ padding: "9px 14px", fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap", color: aba === a ? "var(--fg)" : "var(--muted)", borderBottom: "2px solid " + (aba === a ? "var(--gold)" : "transparent") }}>{n}</Link>)}
+        {abasPermitidas.map(([a, n]) => <Link key={a} href={`/contratos/${id}?aba=${a}`} style={{ padding: "9px 14px", fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap", color: aba === a ? "var(--fg)" : "var(--muted)", borderBottom: "2px solid " + (aba === a ? "var(--gold)" : "transparent") }}>{n}</Link>)}
       </div>
       {corpo}
     </>

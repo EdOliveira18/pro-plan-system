@@ -39,11 +39,25 @@ export default async function Formulario({ e, registro }: { e: Entidade; registr
     const { data } = await ctx.supabase.from("membros").select("user_id, nome").eq("empresa_id", ctx.empresa.id).eq("ativo", true).order("nome");
     for (const c of camposDe(e).filter((c) => c.tipo === "membro")) refs[c.n] = (data ?? []).map((m: any) => ({ id: m.user_id, rotulo: m.nome }));
   }
+  // dados de pagamento da equipe: quem é do financeiro vê e edita; os demais nem recebem os campos
+  let secoes = e.secoes;
+  if (e.sigilo) {
+    if (ctx.financeiro) {
+      if (registro?.id) {
+        const { data: sig } = await ctx.supabase.from("pessoas_sigilo").select("*").eq("pessoa_id", registro.id).maybeSingle();
+        registro = { ...registro, ...Object.fromEntries(Object.entries(sig ?? {}).filter(([k]) => e.sigilo!.includes(k))) };
+      }
+    } else {
+      secoes = e.secoes.map((s) => ({ ...s, campos: s.campos.filter((c) => !e.sigilo!.includes(c.n)) })).filter((s) => s.campos.length);
+    }
+  }
+  if (registro?.id) secoes = secoes.map((s) => ({ ...s, campos: s.campos.filter((c) => !c.soNovo) })).filter((s) => s.campos.length);
   const acao = salvarCadastro.bind(null, e.slug, registro?.id ?? null);
   return (
     <form action={acao} className="panel cad">
       {e.aviso && <div className="cad-aviso">{e.aviso}</div>}
-      {e.secoes.map((s, i) => (
+      {e.sigilo && !ctx.financeiro && <div className="cad-aviso">Salário, comissão e dados bancários ficam visíveis só para dono, gerente e financeiro.</div>}
+      {secoes.map((s, i) => (
         <section key={i}>
           {s.titulo && (i === 0 ? <h2 className="cad-h1">{s.titulo}</h2> : <h3 className="cad-sec">{s.titulo}</h3>)}
           <div className="cad-grid">

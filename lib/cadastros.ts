@@ -5,7 +5,7 @@ import { UFS } from "./fiscal";
 export type TipoCampo = "text" | "select" | "date" | "textarea" | "money" | "pct" | "int" | "num" | "bool" | "email" | "tel" | "cep" | "ref" | "membro" | "cor" | "codigo" | "time";
 export type Campo = {
   n: string; label: string; tipo?: TipoCampo; obrig?: boolean; opcoes?: [string, string][];
-  larg?: 1 | 2 | 3 | 4; padrao?: string; dica?: string; ref?: { tabela: string; rotulo: string; filtro?: Record<string, string> };
+  larg?: 1 | 2 | 3 | 4; padrao?: string; dica?: string; soNovo?: boolean; ref?: { tabela: string; rotulo: string; filtro?: Record<string, string> };
 };
 export type Secao = { titulo?: string; campos: Campo[] };
 export type Coluna = { titulo: string; v: (r: any) => string | null | undefined; tipo?: "status" | "num" | "pill" };
@@ -19,7 +19,11 @@ export type Entidade = {
   select?: string;         // colunas extras para a lista (joins)
   lixeira?: boolean;       // excluir = mover para Excluídos (restaurável)
   aviso?: string;          // faixa azul no topo do formulário
+  sigilo?: string[];       // campos guardados à parte (pessoas_sigilo), só dono, gerente e financeiro veem
 };
+
+// salário, pró-labore, comissão e dados bancários da equipe ficam fora da tabela aberta
+export const CAMPOS_SIGILO = ["salario", "pro_labore", "participacao_pct", "comissao_pct", "dia_pagamento", "banco", "agencia", "conta", "pix_tipo", "pix_chave"];
 
 const op = (...xs: string[]): [string, string][] => xs.map((x) => [x, x]);
 export const SIM_NAO: [string, string][] = [["", "Selecione"], ["sim", "Sim"], ["nao", "Não"]];
@@ -108,7 +112,7 @@ export const ENTIDADES: Entidade[] = [
     ],
   },
   {
-    slug: "funcionarios", tabela: "pessoas", filtro: { categoria: "funcionario" }, singular: "funcionário", plural: "funcionários", artigo: "o",
+    slug: "funcionarios", tabela: "pessoas", filtro: { categoria: "funcionario" }, sigilo: CAMPOS_SIGILO, singular: "funcionário", plural: "funcionários", artigo: "o",
     descricao: "Gerencie todos os funcionários. Salário e dados de contrato ficam visíveis só para dono, gerente e financeiro.",
     busca: "Buscar funcionários", buscaEm: ["nome", "cpf_cnpj", "funcao"],
     vazio: "Cadastre seu primeiro funcionário para gerenciar sua equipe",
@@ -134,10 +138,10 @@ export const ENTIDADES: Entidade[] = [
       { n: "fonte", label: "Fonte", tipo: "select", opcoes: sel(FONTES), obrig: true }] }],
   },
   {
-    slug: "socios", tabela: "pessoas", filtro: { categoria: "socio" }, singular: "sócio", plural: "sócios", artigo: "o",
+    slug: "socios", tabela: "pessoas", filtro: { categoria: "socio" }, sigilo: CAMPOS_SIGILO, singular: "sócio", plural: "sócios", artigo: "o",
     descricao: "Gerencie os sócios da empresa, participação e pró-labore.",
     busca: "Buscar sócios", buscaEm: ["nome", "cpf_cnpj"], vazio: "Cadastre os sócios para controlar participação e pró-labore",
-    colunas: [colsPessoa[0], colsPessoa[1], { titulo: "Participação", v: (r) => (r.participacao_pct != null ? String(r.participacao_pct).replace(".", ",") + "%" : null), tipo: "num" }, colsPessoa[2], colsPessoa[3]],
+    colunas: [colsPessoa[0], colsPessoa[1], colsPessoa[2], colsPessoa[3]],
     secoes: [
       { titulo: "Dados gerais", campos: [...geral("CPF / CNPJ", true), { n: "nome", label: "Nome", obrig: true, larg: 2 }, { n: "rg", label: "RG" }, { n: "nascimento", label: "Data nascimento", tipo: "date" }] },
       endereco(),
@@ -212,7 +216,7 @@ ENTIDADES.push(
       { titulo: "Conversão de unidade", campos: [{ n: "unid_compra", label: "Unid. de compra", tipo: "select", opcoes: UNIDADES, obrig: true, padrao: "UN" },
         { n: "fator_conversao", label: "Equivale a", tipo: "num", padrao: "1", dica: "Quantas unidades de produção vêm em uma de compra" },
         { n: "unid_producao", label: "Unid. de produção", tipo: "select", opcoes: UNIDADES, obrig: true, padrao: "UN" }] },
-      { titulo: "Estoque", campos: [{ n: "estoque", label: "Quantidade atual", tipo: "num", obrig: true, padrao: "0", dica: "Depois do cadastro, o estoque muda pelos pedidos de compra e de saída" }, { n: "estoque_minimo", label: "Estoque mínimo", tipo: "num", padrao: "0" }] },
+      { titulo: "Estoque", campos: [{ n: "estoque", label: "Estoque inicial", tipo: "num", obrig: true, padrao: "0", soNovo: true, dica: "Na unidade de produção. Depois do cadastro, muda pelos pedidos ou por ajuste com motivo" }, { n: "estoque_minimo", label: "Estoque mínimo", tipo: "num", padrao: "0" }] },
       { titulo: "Fornecedor", campos: [{ n: "fornecedor_id", label: "Fornecedor", tipo: "ref", ref: { tabela: "pessoas", rotulo: "nome", filtro: { categoria: "fornecedor" } }, obrig: true, larg: 2 }] },
       { titulo: "Valores", campos: [{ n: "valor_compra", label: "Valor de compra", tipo: "num", padrao: "0" }, { n: "outras_despesas", label: "Outras despesas", tipo: "num", padrao: "0", dica: "Frete, impostos não recuperáveis…" }] },
       { titulo: "Fiscal", campos: [{ n: "ncm", label: "NCM", dica: "Ex.: 4410.11.10 para MDF" }, { n: "cest", label: "CEST" },

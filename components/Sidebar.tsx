@@ -28,6 +28,16 @@ const I: Record<string, React.ReactNode> = {
 };
 
 type Sub = [string, string];
+
+// o que cada perfil enxerga no menu (as páginas também bloqueiam no servidor)
+const SO_FINANCEIRO = ["/financeiro", "/lucratividade"];
+const MONTADOR = ["/producao", "/radar", "/entregas", "/assistencia", "/cadastros/ferramentas", "/render"];
+function menuDoPapel(papel: string, financeiro: boolean, admin: boolean) {
+  const grupos = MENU.map((g) => ({ ...g, itens: g.itens.filter((it) =>
+    (papel === "montador" ? MONTADOR.includes(it.href) : true) && (!SO_FINANCEIRO.includes(it.href) || financeiro)) })).filter((g) => g.itens.length);
+  if (admin) grupos.push({ grupo: "Plataforma", itens: [{ href: "/admin", nome: "Administração", icone: "cfg" }] });
+  return grupos;
+}
 type Item = { href: string; nome: string; icone: string; novo?: boolean; filhos?: Sub[]; base?: string[] };
 
 const MENU: { grupo: string; itens: Item[] }[] = [
@@ -60,11 +70,11 @@ const MENU: { grupo: string; itens: Item[] }[] = [
       ["/financeiro/comissoes", "Comissões"], ["/financeiro/contas", "Contas financeiras"], ["/financeiro/excluidos", "Excluídos"]] },
     { href: "/notas", nome: "Notas fiscais", icone: "nf" },
     { href: "/equipe", nome: "Equipe", icone: "cli" },
-    { href: "/configuracoes", nome: "Configurações", icone: "cfg", filhos: [["/empresa", "Dados da empresa e fiscal"], ["/configuracoes/orcamentos", "Orçamentos"], ["/cadastros/plano-contas", "Plano de contas"], ["/financeiro/contas", "Contas financeiras"]], base: ["/empresa", "/cadastros/plano-contas"] },
+    { href: "/configuracoes", nome: "Configurações", icone: "cfg", filhos: [["/empresa", "Dados da empresa e fiscal"], ["/configuracoes/orcamentos", "Orçamentos"], ["/cadastros/plano-contas", "Plano de contas"], ["/financeiro/contas", "Contas financeiras"], ["/configuracoes/integracoes", "Integrações"]], base: ["/empresa", "/cadastros/plano-contas"] },
   ]},
 ];
 
-export default function Sidebar({ empresa, empresas, nome, email }: { empresa: Empresa; empresas: Empresa[]; nome: string; email: string }) {
+export default function Sidebar({ empresa, empresas, nome, email, papel, financeiro, admin }: { empresa: Empresa; empresas: Empresa[]; nome: string; email: string; papel: string; financeiro: boolean; admin: boolean }) {
   const path = usePathname();
   const router = useRouter();
   const busca = useSearchParams();
@@ -98,7 +108,7 @@ export default function Sidebar({ empresa, empresas, nome, email }: { empresa: E
         <small>{empresa.cnpj ?? "CNPJ não informado"}</small>
       </div>
       <nav className="menu" aria-label="Módulos">
-        {MENU.map((g) => (
+        {menuDoPapel(papel, financeiro, admin).map((g) => (
           <div key={g.grupo} style={{ display: "contents" }}>
             <div className="navlabel">{g.grupo}</div>
             {g.itens.map((it) => it.filhos ? (

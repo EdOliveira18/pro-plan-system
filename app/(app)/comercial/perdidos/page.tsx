@@ -2,32 +2,43 @@ import Link from "next/link";
 import { contexto } from "@/lib/contexto";
 import { brl, data } from "@/lib/formato";
 import NavOrc from "../NavOrc";
+import Paginacao, { pagina } from "@/components/Paginacao";
+import { filtroOrcamentos, limparTermo } from "@/lib/busca";
 import { moverOrcamento } from "../acoes-status";
 
-export default async function Perdidos({ searchParams }: { searchParams: Promise<{ q?: string; erro?: string }> }) {
+export default async function Perdidos({ searchParams }: { searchParams: Promise<{ q?: string; erro?: string; pag?: string }> }) {
   const sp = await searchParams;
   const ctx = await contexto();
-  const { data: rows } = await ctx.supabase.from("orcamentos").select("id, numero, nome_projeto, created_at, perdido_em, motivo_perda, calculo, cliente:clientes(nome)")
-    .eq("empresa_id", ctx.empresa.id).eq("status", "perdido").order("perdido_em", { ascending: false }).limit(1000);
-  const t = (sp.q ?? "").toLowerCase().trim();
-  const lista = ((rows ?? []) as any[]).filter((o) => !t || [o.cliente?.nome, o.nome_projeto, String(o.numero), o.motivo_perda].some((x) => String(x ?? "").toLowerCase().includes(t)));
+  const pg = pagina(sp.pag);
+  let q = ctx.supabase.from("orcamentos").select("id, numero, nome_projeto, created_at, perdido_em, motivo_perda, calculo, cliente:clientes(nome)", { count: "exact" })
+    .eq("empresa_id", ctx.empresa.id).eq("status", "perdido");
+  const filtro = await filtroOrcamentos(ctx.supabase, ctx.empresa.id, sp.q ?? "", ["motivo_perda"]);
+  if (filtro) q = q.or(filtro);
+  const termo = limparTermo(sp.q);
+  const [{ data: rows, count }, { data: res }, { data: geral }] = await Promise.all([
+    q.order("perdido_em", { ascending: false }).order("id").range(pg.de, pg.ate),
+    ctx.supabase.rpc("resumo_orcamentos_f", { p_empresa: ctx.empresa.id, p_status: ["perdido"], p_termo: termo || null }),
+    ctx.supabase.rpc("resumo_perdidos", { p_empresa: ctx.empresa.id }),
+  ]);
+  const lista = (rows ?? []) as any[];
   const valor = (o: any) => Number(o.calculo?.valorProposta ?? 0);
-  const total = lista.reduce((a, o) => a + valor(o), 0);
-  const dias = lista.filter((o) => o.perdido_em).map((o) => (new Date(o.perdido_em).getTime() - new Date(o.created_at).getTime()) / 864e5);
-  const motivos = Object.entries(lista.reduce((m: Record<string, number>, o) => { const k = (o.motivo_perda ?? "Sem motivo").split(":")[0]; m[k] = (m[k] ?? 0) + 1; return m; }, {})).sort((a, b) => b[1] - a[1]);
+  const R = (res ?? {}) as any, G = (geral ?? {}) as any;
+  const qtd = Number(R.qtd ?? 0), total = Number(R.valor ?? 0), diasMedio = Number(R.dias_perda ?? 0);
+  const motivos = ((G.motivos ?? []) as { motivo: string; qtd: number }[]).map((m) => [m.motivo, Number(m.qtd)] as [string, number]);
+  const totalMotivos = motivos.reduce((a, [, n]) => a + n, 0);
   return (
     <>
       <div className="head"><div><h1>Orçamentos Perdidos</h1><p className="sub">Todos os orçamentos que foram perdidos e o motivo</p></div></div>
       <NavOrc atual="/comercial/perdidos" />
       {sp.erro && <div className="erro">{sp.erro}</div>}
       <div className="grid kpis" style={{ marginBottom: 16 }}>
-        <div className="panel kpi kcard"><span className="tg p-neu">Perdidos</span><div className="v">{lista.length}</div><div className="l">Orçamentos perdidos</div></div>
+        <div className="panel kpi kcard"><span className="tg p-neu">Perdidos</span><div className="v">{qtd}</div><div className="l">Orçamentos perdidos</div></div>
         <div className="panel kpi kcard"><span className="tg p-neu">Valor perdido</span><div className="v">{brl(total)}</div><div className="l">Valor total perdido</div></div>
-        <div className="panel kpi kcard"><span className="tg p-info">Média</span><div className="v">{brl(lista.length ? total / lista.length : 0)}</div><div className="l">Ticket médio</div></div>
-        <div className="panel kpi kcard"><span className="tg p-warn">Tempo</span><div className="v">{dias.length ? Math.round(dias.reduce((a, b) => a + b, 0) / dias.length) : 0} dias</div><div className="l">Tempo médio até a perda</div></div>
+        <div className="panel kpi kcard"><span className="tg p-info">Média</span><div className="v">{brl(qtd ? total / qtd : 0)}</div><div className="l">Ticket médio</div></div>
+        <div className="panel kpi kcard"><span className="tg p-warn">Tempo</span><div className="v">{diasMedio} dias</div><div className="l">Tempo médio até a perda</div></div>
       </div>
       {!!motivos.length && <div className="panel" style={{ marginBottom: 16 }}><h2>Por que estamos perdendo</h2>
-        {motivos.map(([m, n]) => <div key={m} className="row"><span>{m}</span><span className="num">{n} ({Math.round((n / lista.length) * 100)}%)</span></div>)}</div>}
+        {motivos.map(([m, n]) => <div key={m} className="row"><span>{m}</span><span className="num">{n} ({Math.round((n / totalMotivos) * 100)}%)</span></div>)}</div>}
       <div className="panel" style={{ padding: 0 }}>
         <form className="cad-busca"><input name="q" defaultValue={sp.q ?? ""} placeholder="Buscar cliente, número ou motivo" style={{ flex: 1 }} aria-label="Buscar" /><button className="btn">Filtrar</button></form>
         <div className="scroll"><table className="cad-tab">
@@ -44,7 +55,7 @@ export default async function Perdidos({ searchParams }: { searchParams: Promise
             </tr>))}</tbody>
         </table></div>
         {!lista.length && <div className="vazio"><b>Nenhum orçamento perdido.</b></div>}
-        <div className="cad-rod note">Mostrando {lista.length} registro(s)</div>
+        <Paginacao total={count ?? 0} pag={pg.pag} base="/comercial/perdidos" params={sp} />
       </div>
     </>
   );

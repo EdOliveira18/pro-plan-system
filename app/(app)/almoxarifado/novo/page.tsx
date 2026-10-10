@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { contexto } from "@/lib/contexto";
 import { criarPedido } from "../acoes";
+import { hojeISO, dataHora, somaDias } from "@/lib/tempo";
 
 export default async function NovoPedido({ searchParams }: { searchParams: Promise<{ tipo?: string; erro?: string; contrato?: string }> }) {
   const sp = await searchParams;
@@ -13,7 +14,7 @@ export default async function NovoPedido({ searchParams }: { searchParams: Promi
     ctx.supabase.from("naturezas").select("id, nome, cfop_estadual").eq("empresa_id", eid).order("nome"),
     ctx.supabase.from("contratos").select("id, codigo, cliente:clientes(nome)").eq("empresa_id", eid).order("created_at", { ascending: false }).limit(300),
   ]);
-  const hoje = new Date().toISOString().slice(0, 10);
+  const hoje = hojeISO();
   return (<>
     <nav className="migalha">Almoxarifado › {tipo === "compra" ? "Pedidos de compra" : "Pedidos de saída"} › Adicionar</nav>
     <div className="head"><div><h1>Adicionar Pedido de {tipo === "compra" ? "Compra" : "Saída"}</h1><p className="sub">{tipo === "compra" ? "Cadastre um novo pedido de compra para o almoxarifado" : "Registre a retirada de material do estoque"}</p></div></div>

@@ -8,7 +8,8 @@ export default function Refazer({ id }: { id: string }) {
   return (
     <button className="btn sm" disabled={rodando} onClick={async () => {
       setRodando(true);
-      await fetch("/api/render", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ renderId: id }) });
+      const resp = await fetch("/api/render", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ renderId: id, novamente: true }) });
+      if (!resp.ok) { const j = await resp.json().catch(() => ({})); if (j.erro) alert(j.erro); }
       setRodando(false);
       router.refresh();
     }}>{rodando ? "Gerando…" : "Gerar de novo"}</button>
