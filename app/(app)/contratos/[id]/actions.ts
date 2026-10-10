@@ -32,7 +32,7 @@ export async function marcarAssinatura(id: string, lado: "empresa" | "cliente", 
 
 export async function marcarRealizado(contratoId: string, lancId: string, realizado: boolean) {
   const ctx = await contexto();
-  const { error } = await ctx.supabase.from("lancamentos").update({ realizado }).eq("id", lancId);
+  const { error } = await ctx.supabase.from("lancamentos").update({ realizado, pago_em: realizado ? new Date().toISOString().slice(0, 10) : null }).eq("id", lancId);
   voltar(contratoId, error?.message);
 }
 

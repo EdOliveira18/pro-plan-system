@@ -30,7 +30,7 @@ async function novoLanc(mes: string, fd: FormData) {
 async function alternar(mes: string, id: string, realizado: boolean) {
   "use server";
   const ctx = await contexto();
-  const { error } = await ctx.supabase.from("lancamentos").update({ realizado }).eq("id", id);
+  const { error } = await ctx.supabase.from("lancamentos").update({ realizado, pago_em: realizado ? new Date().toISOString().slice(0, 10) : null }).eq("id", id);
   ir("fluxo", mes, error?.message);
 }
 async function novaNota(mes: string, fd: FormData) {
@@ -63,9 +63,9 @@ export default async function Financeiro({ searchParams }: { searchParams: Promi
 
   if (aba === "fluxo") {
     const [{ data: doMes }, { data: atrasados }, { data: realizados }] = await Promise.all([
-      sb.from("lancamentos").select("*, contrato:contratos(codigo)").eq("empresa_id", eid).gte("data", p.inicio).lt("data", p.fim).order("data"),
-      sb.from("lancamentos").select("valor").eq("empresa_id", eid).eq("realizado", false).lt("data", hoje).gt("valor", 0),
-      sb.from("lancamentos").select("valor").eq("empresa_id", eid).eq("realizado", true),
+      sb.from("lancamentos").select("*, contrato:contratos(codigo)").is("excluido_em", null).eq("empresa_id", eid).gte("data", p.inicio).lt("data", p.fim).order("data"),
+      sb.from("lancamentos").select("valor").is("excluido_em", null).eq("empresa_id", eid).eq("realizado", false).lt("data", hoje).gt("valor", 0),
+      sb.from("lancamentos").select("valor").is("excluido_em", null).eq("empresa_id", eid).eq("realizado", true),
     ]);
     const L = (doMes ?? []) as any[];
     const soma = (f: (l: any) => boolean) => L.filter(f).reduce((s, l) => s + Number(l.valor), 0);
@@ -119,7 +119,7 @@ export default async function Financeiro({ searchParams }: { searchParams: Promi
       sb.from("contas_bancarias").select("*").eq("empresa_id", eid).order("created_at"),
       sb.from("extrato").select("*, conta:contas_bancarias(nome)").eq("empresa_id", eid).eq("status", "pendente").order("data", { ascending: false }).limit(200),
       sb.from("extrato").select("*, lancamento:lancamentos(descricao, categoria, contrato:contratos(codigo))").eq("empresa_id", eid).eq("status", "conciliado").order("data", { ascending: false }).limit(30),
-      sb.from("lancamentos").select("id, data, valor, descricao, contrato:contratos(codigo)").eq("empresa_id", eid).eq("realizado", false),
+      sb.from("lancamentos").select("id, data, valor, descricao, contrato:contratos(codigo)").is("excluido_em", null).eq("empresa_id", eid).eq("realizado", false),
       sb.from("conexoes_bancarias").select("*").eq("empresa_id", eid).neq("status", "DELETED").order("created_at"),
     ]);
     const openFinanceAtivo = !!process.env.PLUGGY_CLIENT_ID;
@@ -211,7 +211,7 @@ export default async function Financeiro({ searchParams }: { searchParams: Promi
   }
 
   if (aba === "contratos") {
-    const { data: lanc } = await sb.from("lancamentos").select("contrato_id, valor, realizado").eq("empresa_id", eid).not("contrato_id", "is", null);
+    const { data: lanc } = await sb.from("lancamentos").select("contrato_id, valor, realizado").is("excluido_em", null).eq("empresa_id", eid).not("contrato_id", "is", null);
     const linhas = K.map((k) => {
       const ls = (lanc ?? []).filter((l) => l.contrato_id === k.id && l.realizado);
       const rec = ls.filter((l) => Number(l.valor) > 0).reduce((s, l) => s + Number(l.valor), 0);
@@ -245,7 +245,7 @@ export default async function Financeiro({ searchParams }: { searchParams: Promi
     const [{ data: cfg }, { data: membros }, { data: rtLanc }] = await Promise.all([
       sb.from("configuracoes").select("faixas_comissao").eq("empresa_id", eid).single(),
       sb.from("membros").select("user_id, nome").eq("empresa_id", eid),
-      sb.from("lancamentos").select("contrato_id, valor, realizado").eq("empresa_id", eid).eq("categoria", "comissao_rt"),
+      sb.from("lancamentos").select("contrato_id, valor, realizado").is("excluido_em", null).eq("empresa_id", eid).eq("categoria", "comissao_rt"),
     ]);
     const faixas = ((cfg?.faixas_comissao ?? []) as { nome: string; a_partir_de: number; pct: number }[]).sort((a, b) => a.a_partir_de - b.a_partir_de);
     const faixaDe = (v: number) => faixas.filter((f) => v >= f.a_partir_de).pop() ?? { nome: "n/a", pct: 0, a_partir_de: 0 };

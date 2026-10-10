@@ -49,14 +49,25 @@ export async function excluirCadastro(slug: string, id: string) {
   const e = entidade(slug);
   if (!e) return;
   const ctx = await contexto();
-  const { error } = await ctx.supabase.from(e.tabela).delete().eq("id", id).eq("empresa_id", ctx.empresa.id);
+  const { error } = e.lixeira
+    ? await ctx.supabase.from(e.tabela).update({ excluido_em: new Date().toISOString(), excluido_por: ctx.userId }).eq("id", id).eq("empresa_id", ctx.empresa.id)
+    : await ctx.supabase.from(e.tabela).delete().eq("id", id).eq("empresa_id", ctx.empresa.id);
   if (error) {
     voltar(slug, "erro", error.code === "23503"
       ? `Não dá para excluir: há contratos ou orçamentos ligados a ${e.artigo === "a" ? "esta" : "este"} ${e.singular}. Marque como inativo.`
       : error.message);
   }
   revalidatePath(`/cadastros/${slug}`);
-  voltar(slug, "msg", "Registro excluído.");
+  voltar(slug, "msg", e.lixeira ? "Movido para Excluídos. Dá para restaurar quando quiser." : "Registro excluído.");
+}
+
+export async function restaurarCadastro(slug: string, id: string) {
+  const e = entidade(slug);
+  if (!e?.lixeira) return;
+  const ctx = await contexto();
+  await ctx.supabase.from(e.tabela).update({ excluido_em: null, excluido_por: null }).eq("id", id).eq("empresa_id", ctx.empresa.id);
+  revalidatePath(`/cadastros/${slug}`);
+  redirect(`/cadastros/${slug}?lixeira=1&msg=` + encodeURIComponent("Restaurado com os mesmos dados de antes."));
 }
 
 // Importação de clientes por planilha (CSV salvo do Excel, separado por ; ou ,)

@@ -2,10 +2,10 @@
 // e a gravação só aceita os campos declarados (nada além disso chega ao banco).
 import { UFS } from "./fiscal";
 
-export type TipoCampo = "text" | "select" | "date" | "textarea" | "money" | "pct" | "int" | "bool" | "email" | "tel" | "cep" | "ref";
+export type TipoCampo = "text" | "select" | "date" | "textarea" | "money" | "pct" | "int" | "num" | "bool" | "email" | "tel" | "cep" | "ref" | "membro" | "cor" | "codigo" | "time";
 export type Campo = {
   n: string; label: string; tipo?: TipoCampo; obrig?: boolean; opcoes?: [string, string][];
-  larg?: 1 | 2 | 3 | 4; padrao?: string; dica?: string; ref?: { tabela: string; rotulo: string };
+  larg?: 1 | 2 | 3 | 4; padrao?: string; dica?: string; ref?: { tabela: string; rotulo: string; filtro?: Record<string, string> };
 };
 export type Secao = { titulo?: string; campos: Campo[] };
 export type Coluna = { titulo: string; v: (r: any) => string | null | undefined; tipo?: "status" | "num" | "pill" };
@@ -15,6 +15,10 @@ export type Entidade = {
   descricao: string; busca: string; buscaEm: string[];
   colunas: Coluna[]; secoes: Secao[]; ordem?: string;
   vazio: string;
+  grupo?: string;          // migalha (ex.: Almoxarifado)
+  select?: string;         // colunas extras para a lista (joins)
+  lixeira?: boolean;       // excluir = mover para Excluídos (restaurável)
+  aviso?: string;          // faixa azul no topo do formulário
 };
 
 const op = (...xs: string[]): [string, string][] => xs.map((x) => [x, x]);
@@ -100,7 +104,7 @@ export const ENTIDADES: Entidade[] = [
       { titulo: "Contatos", campos: [{ n: "telefone", label: "Telefone", tipo: "tel" }, { n: "celular", label: "Celular", tipo: "tel" }, { n: "telefone_comercial", label: "Telefone comercial", tipo: "tel" },
         { n: "ramal", label: "Ramal" }, { n: "telefone_conjuge", label: "Telefone cônjuge", tipo: "tel" }, { n: "email", label: "E-mail", tipo: "email" }, { n: "site", label: "Site" }] },
       { titulo: "Dados adicionais", campos: [{ n: "observacoes", label: "Observações", tipo: "textarea", larg: 2 }, { n: "indicacao", label: "Indicação da loja" },
-        { n: "campanha_id", label: "Origem (campanha)", tipo: "ref", ref: { tabela: "campanhas", rotulo: "nome" } }] },
+        { n: "campanha_id", label: "Origem do cliente", tipo: "ref", ref: { tabela: "campanhas", rotulo: "nome" } }] },
     ],
   },
   {
@@ -182,6 +186,98 @@ export const ENTIDADES: Entidade[] = [
   },
 ];
 
+
+const brlS = (v: unknown) => (v == null ? null : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
+export const UNIDADES = op("UN Unidade", "CH Chapa", "M2 Metro quadrado", "M Metro linear", "KG Quilo", "L Litro", "CX Caixa", "PC Peça", "PAR Par", "RL Rolo", "JG Jogo", "H Hora", "DIA Diária").map(([k]): [string, string] => [k.split(" ")[0], k]);
+export const TIPOS_PRODUTO = op("Matéria-prima", "Ferragem", "Acessório", "Insumo", "Produto acabado", "Uso e consumo", "Revenda");
+const sn = (b: boolean) => (b ? "Sim" : "Não");
+
+ENTIDADES.push(
+  {
+    slug: "produtos", tabela: "produtos", grupo: "Almoxarifado", singular: "produto", plural: "produtos", artigo: "o", lixeira: true,
+    select: "*, categoria:categorias_produto(nome)", ordem: "nome",
+    descricao: "Gerencie os produtos do almoxarifado: chapas, ferragens, acessórios e insumos.",
+    busca: "Buscar produtos por nome, código ou referência", buscaEm: ["nome", "codigo", "referencia", "marca"],
+    vazio: "Cadastre o primeiro produto para controlar o estoque",
+    aviso: "Obrigatório o preenchimento dos campos com asterisco.",
+    colunas: [{ titulo: "Código", v: (r) => r.codigo, tipo: "num" }, { titulo: "Nome", v: (r) => r.nome }, { titulo: "Categoria", v: (r) => r.categoria?.nome },
+      { titulo: "Estoque", v: (r) => `${String(Number(r.estoque)).replace(".", ",")} ${r.unid_producao}${Number(r.estoque) <= Number(r.estoque_minimo) && Number(r.estoque_minimo) > 0 ? " ⚠" : ""}`, tipo: "num" },
+      { titulo: "Estoque mín.", v: (r) => String(Number(r.estoque_minimo)).replace(".", ","), tipo: "num" }, { titulo: "Preço", v: (r) => brlS(r.valor_final), tipo: "num" }],
+    secoes: [
+      { campos: [{ n: "nome", label: "Nome", obrig: true, larg: 2 }, { n: "tipo", label: "Tipo", tipo: "select", opcoes: sel(TIPOS_PRODUTO), obrig: true },
+        { n: "categoria_id", label: "Categoria", tipo: "ref", ref: { tabela: "categorias_produto", rotulo: "nome" }, obrig: true },
+        { n: "codigo", label: "Código interno", tipo: "codigo", obrig: true }, { n: "referencia", label: "Referência" }, { n: "marca", label: "Marca" },
+        { n: "acabamento", label: "Acabamento" }, { n: "cor", label: "Cor", tipo: "select", opcoes: sel(op("Branco", "Preto", "Cinza", "Grafite", "Amadeirado", "Off-white", "Areia", "Fendi", "Verde", "Azul", "Inox", "Dourado", "Champanhe", "Bronze", "Transparente", "Outra")) },
+        { n: "localizacao", label: "Localização" }, { n: "observacoes", label: "Observações", tipo: "textarea", larg: 2 }] },
+      { titulo: "Conversão de unidade", campos: [{ n: "unid_compra", label: "Unid. de compra", tipo: "select", opcoes: UNIDADES, obrig: true, padrao: "UN" },
+        { n: "fator_conversao", label: "Equivale a", tipo: "num", padrao: "1", dica: "Quantas unidades de produção vêm em uma de compra" },
+        { n: "unid_producao", label: "Unid. de produção", tipo: "select", opcoes: UNIDADES, obrig: true, padrao: "UN" }] },
+      { titulo: "Estoque", campos: [{ n: "estoque", label: "Quantidade atual", tipo: "num", obrig: true, padrao: "0", dica: "Depois do cadastro, o estoque muda pelos pedidos de compra e de saída" }, { n: "estoque_minimo", label: "Estoque mínimo", tipo: "num", padrao: "0" }] },
+      { titulo: "Fornecedor", campos: [{ n: "fornecedor_id", label: "Fornecedor", tipo: "ref", ref: { tabela: "pessoas", rotulo: "nome", filtro: { categoria: "fornecedor" } }, obrig: true, larg: 2 }] },
+      { titulo: "Valores", campos: [{ n: "valor_compra", label: "Valor de compra", tipo: "num", padrao: "0" }, { n: "outras_despesas", label: "Outras despesas", tipo: "num", padrao: "0", dica: "Frete, impostos não recuperáveis…" }] },
+      { titulo: "Fiscal", campos: [{ n: "ncm", label: "NCM", dica: "Ex.: 4410.11.10 para MDF" }, { n: "cest", label: "CEST" },
+        { n: "origem", label: "Origem", tipo: "select", opcoes: sel([["0", "0 Nacional"], ["1", "1 Estrangeira, importação direta"], ["2", "2 Estrangeira, mercado interno"], ["3", "3 Nacional, conteúdo importado 40% a 70%"], ["5", "5 Nacional, conteúdo importado até 40%"], ["8", "8 Nacional, conteúdo importado acima de 70%"]]) },
+        { n: "tributacao", label: "Tributação", tipo: "select", opcoes: [["simples", "SIMPLES"], ["normal", "NORMAL"]], obrig: true, padrao: "simples" }] },
+    ],
+  },
+  {
+    slug: "categorias-produto", tabela: "categorias_produto", grupo: "Almoxarifado", singular: "categoria", plural: "categorias de produtos", artigo: "a",
+    descricao: "Gerencie as categorias dos produtos.", busca: "Buscar categorias", buscaEm: ["nome"], vazio: "Cadastre a primeira categoria",
+    colunas: [{ titulo: "Nome da categoria", v: (r) => r.nome }, { titulo: "Precificação", v: (r) => sn(r.precificacao), tipo: "pill" }],
+    secoes: [{ campos: [{ n: "nome", label: "Nome", obrig: true, larg: 3 }, { n: "precificacao", label: "Precificação", tipo: "bool", obrig: true, dica: "Entra no cálculo de preço dos orçamentos" }] }],
+  },
+  {
+    slug: "naturezas", tabela: "naturezas", grupo: "Almoxarifado", singular: "natureza", plural: "naturezas", artigo: "a",
+    descricao: "Naturezas de operação usadas na entrada de notas de compra.", busca: "Buscar naturezas", buscaEm: ["nome", "cfop_estadual"], vazio: "Cadastre a primeira natureza",
+    colunas: [{ titulo: "Nome", v: (r) => r.nome }, { titulo: "Tipo", v: (r) => (r.tipo === "entrada" ? "Entrada" : "Saída"), tipo: "pill" },
+      { titulo: "CFOP estadual", v: (r) => r.cfop_estadual, tipo: "num" }, { titulo: "CFOP interestadual", v: (r) => r.cfop_interestadual, tipo: "num" }],
+    secoes: [{ campos: [{ n: "nome", label: "Nome", obrig: true, larg: 2 }, { n: "tipo", label: "Tipo", tipo: "select", opcoes: [["entrada", "Entrada"], ["saida", "Saída"]], padrao: "entrada" },
+      { n: "cfop_estadual", label: "CFOP interno", obrig: true, dica: "Ex.: 1101, 1102, 1556" }, { n: "cfop_interestadual", label: "CFOP interestadual", obrig: true, dica: "Ex.: 2101, 2102, 2556" }] },
+      { titulo: "PIS", campos: [{ n: "pis_cst", label: "Situação tributária", tipo: "select", obrig: true, padrao: "nao_usar", opcoes: [["nao_usar", "Não usar"], ["50", "50 Crédito vinculado a receita tributada"], ["70", "70 Aquisição sem direito a crédito"], ["73", "73 Aquisição a alíquota zero"], ["98", "98 Outras operações de entrada"], ["99", "99 Outras operações"]] }] },
+      { titulo: "COFINS", campos: [{ n: "cofins_cst", label: "Situação tributária", tipo: "select", obrig: true, padrao: "nao_usar", opcoes: [["nao_usar", "Não usar"], ["50", "50 Crédito vinculado a receita tributada"], ["70", "70 Aquisição sem direito a crédito"], ["73", "73 Aquisição a alíquota zero"], ["98", "98 Outras operações de entrada"], ["99", "99 Outras operações"]] }] }],
+  },
+  {
+    slug: "tipos-servico", tabela: "tipos_servico", grupo: "Produção", singular: "tipo de serviço", plural: "tipos de serviços", artigo: "o",
+    descricao: "Gerencie os tipos de serviços disponíveis para as ordens de produção.", busca: "Buscar serviços", buscaEm: ["nome"], vazio: "Nenhum serviço cadastrado",
+    colunas: [{ titulo: "Nome", v: (r) => r.nome }, { titulo: "Unidade", v: (r) => r.unidade, tipo: "num" }, { titulo: "Valor", v: (r) => brlS(r.valor), tipo: "num" },
+      { titulo: "Markup", v: (r) => (r.markup_pct != null ? String(r.markup_pct).replace(".", ",") + "%" : null), tipo: "num" }],
+    secoes: [{ campos: [{ n: "nome", label: "Nome do serviço", obrig: true }, { n: "unidade", label: "Unidade", tipo: "select", opcoes: sel(UNIDADES), obrig: true, dica: "Como o serviço é medido" },
+      { n: "valor", label: "Valor", tipo: "money", dica: "Custo por unidade" }, { n: "markup_pct", label: "Markup % (opcional)", tipo: "pct", dica: "Acréscimo sobre o custo na precificação" }] }],
+  },
+  {
+    slug: "etapas-execucao", tabela: "etapas_execucao", grupo: "Produção", singular: "etapa", plural: "etapas de execução", artigo: "a",
+    descricao: "Cadastre as etapas de execução (mão de obra) e o valor/hora padrão de cada uma.", busca: "Buscar etapas", buscaEm: ["nome"], vazio: "Cadastre a primeira etapa",
+    colunas: [{ titulo: "Nome", v: (r) => r.nome }, { titulo: "Valor/hora", v: (r) => brlS(r.valor_hora) + "/h", tipo: "num" },
+      { titulo: "Markup", v: (r) => (r.markup_pct != null ? String(r.markup_pct).replace(".", ",") + "%" : null), tipo: "num" }],
+    secoes: [{ campos: [{ n: "nome", label: "Nome", obrig: true, larg: 2 }, { n: "valor_hora", label: "Valor/hora", tipo: "money", padrao: "0" }, { n: "markup_pct", label: "Markup %", tipo: "pct" }] }],
+  },
+  {
+    slug: "status-entrega", tabela: "status_entrega", grupo: "Entregas", singular: "status", plural: "status de entregas", artigo: "o", ordem: "ordem",
+    descricao: "Gerencie os status das entregas. A ordem define a sequência no acompanhamento.", busca: "Buscar status", buscaEm: ["nome"], vazio: "Cadastre o primeiro status",
+    colunas: [{ titulo: "Nome", v: (r) => r.nome }, { titulo: "Cor", v: (r) => r.cor, tipo: "num" }, { titulo: "Ordem", v: (r) => String(r.ordem), tipo: "num" }, { titulo: "Conclui a entrega", v: (r) => sn(r.final), tipo: "pill" }],
+    secoes: [{ campos: [{ n: "nome", label: "Nome", obrig: true, larg: 2 }, { n: "cor", label: "Cor", tipo: "cor", padrao: "#999999" }, { n: "ordem", label: "Ordem", tipo: "int", obrig: true, padrao: "1" },
+      { n: "final", label: "Conclui a entrega", tipo: "bool", dica: "Marque no status que significa entregue" }] }],
+  },
+  {
+    slug: "ferramentas", tabela: "ferramentas", grupo: "Ferramentaria", singular: "ferramenta", plural: "ferramentas", artigo: "a", ordem: "numero",
+    select: "*, responsavel:pessoas(nome)",
+    descricao: "Gerencie as ferramentas da empresa e quem é responsável por cada uma.", busca: "Buscar pelo nome da ferramenta, marca ou série", buscaEm: ["nome", "marca", "serie", "aplicacao"],
+    vazio: "Nenhuma ferramenta cadastrada",
+    colunas: [{ titulo: "Código", v: (r) => String(r.numero), tipo: "num" }, { titulo: "Nome", v: (r) => r.nome }, { titulo: "Quant.", v: (r) => String(r.quantidade), tipo: "num" },
+      { titulo: "Marca", v: (r) => r.marca }, { titulo: "Série", v: (r) => r.serie, tipo: "num" }, { titulo: "Aplicação", v: (r) => r.aplicacao }, { titulo: "Responsável", v: (r) => r.responsavel?.nome }],
+    secoes: [{ campos: [{ n: "nome", label: "Descrição", obrig: true, larg: 2 }, { n: "marca", label: "Marca", larg: 2 }, { n: "serie", label: "Série" }, { n: "aplicacao", label: "Aplicação" },
+      { n: "quantidade", label: "Quantidade", tipo: "int", obrig: true, padrao: "1" },
+      { n: "responsavel_id", label: "Responsável", tipo: "ref", ref: { tabela: "pessoas", rotulo: "nome", filtro: { categoria: "funcionario" } }, obrig: true }] }],
+  },
+  {
+    slug: "plano-contas", tabela: "plano_contas", grupo: "Financeiro", singular: "conta", plural: "plano de contas", artigo: "a", ordem: "codigo",
+    descricao: "Estrutura de receitas, custos e despesas usada nos lançamentos e no DRE.", busca: "Buscar conta", buscaEm: ["codigo", "nome"], vazio: "Cadastre a primeira conta",
+    colunas: [{ titulo: "Código", v: (r) => r.codigo, tipo: "num" }, { titulo: "Nome", v: (r) => r.nome }, { titulo: "Tipo", v: (r) => ({ receita: "Receita", custo: "Custo", despesa: "Despesa" } as Record<string, string>)[r.tipo], tipo: "pill" }],
+    secoes: [{ campos: [{ n: "codigo", label: "Código", obrig: true, dica: "Ex.: 3.1.6" }, { n: "nome", label: "Nome", obrig: true, larg: 2 },
+      { n: "tipo", label: "Tipo", tipo: "select", obrig: true, opcoes: [["", "Selecione"], ["receita", "Receita"], ["custo", "Custo"], ["despesa", "Despesa"]] }] }],
+  },
+);
+
 export const entidade = (slug: string) => ENTIDADES.find((e) => e.slug === slug);
 export const camposDe = (e: Entidade) => e.secoes.flatMap((s) => s.campos);
 
@@ -189,13 +285,18 @@ export const camposDe = (e: Entidade) => e.secoes.flatMap((s) => s.campos);
 export function converter(c: Campo, bruto: FormDataEntryValue | null): unknown {
   const s = String(bruto ?? "").trim();
   switch (c.tipo) {
-    case "bool": return s === "sim" ? true : s === "nao" ? false : c.n === "produtor_rural" || c.n === "comissao_usa_pct" ? false : null;
+    case "bool": return s === "sim" ? true : s === "nao" ? false : c.obrig ? null : false;
     case "money": case "pct": {
       if (!s) return null;
       const n = Number(s.includes(",") ? s.replace(/\./g, "").replace(",", ".") : s);
       return Number.isFinite(n) ? n : null;
     }
     case "int": { if (!s) return null; const n = parseInt(s, 10); return Number.isFinite(n) ? n : null; }
+    case "num": {
+      if (!s) return c.obrig ? null : 0;
+      const n = Number(s.includes(",") ? s.replace(/\./g, "").replace(",", ".") : s);
+      return Number.isFinite(n) ? n : null;
+    }
     default: return s || null;
   }
 }
@@ -205,6 +306,7 @@ export function exibir(c: Campo, v: unknown): string {
   if (v === null || v === undefined) return c.padrao ?? "";
   if (c.tipo === "bool") return v ? "sim" : "nao";
   if (c.tipo === "money") return Number(v).toFixed(2).replace(".", ",");
-  if (c.tipo === "pct") return String(v).replace(".", ",");
+  if (c.tipo === "pct" || c.tipo === "num") return String(Number(v)).replace(".", ",");
+  if (c.tipo === "time") return String(v).slice(0, 5);
   return String(v);
 }

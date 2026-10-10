@@ -15,7 +15,7 @@ export default async function Editar({ params, searchParams }: { params: Promise
   const Nome = e.singular[0].toUpperCase() + e.singular.slice(1);
   return (
     <>
-      <nav className="migalha"><Link href={`/cadastros/${e.slug}`}>Cadastros</Link> › <Link href={`/cadastros/${e.slug}`}>{e.plural[0].toUpperCase() + e.plural.slice(1)}</Link> › Editar</nav>
+      <nav className="migalha"><Link href={`/cadastros/${e.slug}`}>{e.grupo ?? "Cadastros"}</Link> › <Link href={`/cadastros/${e.slug}`}>{e.plural[0].toUpperCase() + e.plural.slice(1)}</Link> › Editar</nav>
       <div className="head"><div><h1>{Nome}: {(data as any).nome ?? (data as any).sigla}</h1><p className="sub">Altere as informações e clique em Salvar</p></div></div>
       {sp.erro && <div className="erro">{sp.erro}</div>}
       <Formulario e={e} registro={data as any} />

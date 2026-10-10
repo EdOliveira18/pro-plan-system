@@ -52,7 +52,7 @@ export async function vincular(extratoId: string, lancId: string) {
   const ctx = await contexto();
   const { data: m } = await ctx.supabase.from("extrato").select("data, conta_id").eq("id", extratoId).single();
   if (!m) return erro("Movimentação não encontrada.");
-  await ctx.supabase.from("lancamentos").update({ realizado: true, data: m.data, conta_id: m.conta_id }).eq("id", lancId);
+  await ctx.supabase.from("lancamentos").update({ realizado: true, pago_em: m.data, conta_id: m.conta_id }).eq("id", lancId);
   await ctx.supabase.from("extrato").update({ status: "conciliado", lancamento_id: lancId }).eq("id", extratoId);
   msg("Movimentação conciliada.");
 }
@@ -80,7 +80,7 @@ export async function ignorar(extratoId: string) {
 export async function desfazer(extratoId: string) {
   const ctx = await contexto();
   const { data: m } = await ctx.supabase.from("extrato").select("lancamento_id").eq("id", extratoId).single();
-  if (m?.lancamento_id) await ctx.supabase.from("lancamentos").update({ realizado: false }).eq("id", m.lancamento_id);
+  if (m?.lancamento_id) await ctx.supabase.from("lancamentos").update({ realizado: false, pago_em: null }).eq("id", m.lancamento_id);
   await ctx.supabase.from("extrato").update({ status: "pendente", lancamento_id: null }).eq("id", extratoId);
   msg("Conciliação desfeita. A movimentação voltou para a fila.");
 }

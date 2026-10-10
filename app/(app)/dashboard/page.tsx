@@ -14,7 +14,7 @@ export default async function Dashboard() {
   const [{ data: doMes }, { data: abertos }, { data: receber }, { data: atrasados }, { data: porCampanha }, { data: campanhas }] = await Promise.all([
     sb.from("contratos").select("valor_total, vpl, lucro_previsto").eq("empresa_id", eid).gte("data_venda", ini),
     sb.from("contratos").select("etapa_workflow").eq("empresa_id", eid).eq("encerrado", false),
-    sb.from("lancamentos").select("valor").eq("empresa_id", eid).eq("categoria", "recebimento").eq("realizado", false).gte("data", hojeStr).lte("data", em30),
+    sb.from("lancamentos").select("valor").is("excluido_em", null).eq("empresa_id", eid).eq("categoria", "recebimento").eq("realizado", false).gte("data", hojeStr).lte("data", em30),
     sb.from("marcos").select("id, contrato:contratos!inner(marco_atual, encerrado)").eq("empresa_id", eid).is("concluido_em", null).lt("previsto_em", hojeStr),
     sb.from("contratos").select("campanha_id, valor_total, lucro_previsto").eq("empresa_id", eid),
     sb.from("campanhas").select("id, nome, investimento").eq("empresa_id", eid),

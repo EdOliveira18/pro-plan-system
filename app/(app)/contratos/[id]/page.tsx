@@ -68,7 +68,7 @@ export default async function Contrato({ params, searchParams }: { params: Promi
   }
 
   if (aba === "financeiro") {
-    const { data: lanc } = await sb.from("lancamentos").select("*").eq("contrato_id", id).order("data");
+    const { data: lanc } = await sb.from("lancamentos").select("*").is("excluido_em", null).eq("contrato_id", id).order("data");
     const L = lanc ?? [];
     const rec = L.filter((l) => Number(l.valor) > 0 && l.realizado).reduce((s, l) => s + Number(l.valor), 0);
     const sai = -L.filter((l) => Number(l.valor) < 0 && l.realizado).reduce((s, l) => s + Number(l.valor), 0);

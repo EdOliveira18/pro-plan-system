@@ -13,12 +13,12 @@ export function pluggy() {
 export async function conciliarEmpresa(sb: SupabaseClient, empresaId: string): Promise<number> {
   const [{ data: movs }, { data: prev }] = await Promise.all([
     sb.from("extrato").select("id, data, valor, conta_id").eq("empresa_id", empresaId).eq("status", "pendente"),
-    sb.from("lancamentos").select("id, data, valor").eq("empresa_id", empresaId).eq("realizado", false),
+    sb.from("lancamentos").select("id, data, valor").is("excluido_em", null).eq("empresa_id", empresaId).eq("realizado", false),
   ]);
   const pares = conciliar((movs ?? []).map((m) => ({ ...m, valor: Number(m.valor) })), (prev ?? []).map((p) => ({ ...p, valor: Number(p.valor) })));
   for (const [movId, lancId] of pares) {
     const m = movs!.find((x) => x.id === movId)!;
-    await sb.from("lancamentos").update({ realizado: true, data: m.data, conta_id: m.conta_id }).eq("id", lancId).eq("empresa_id", empresaId);
+    await sb.from("lancamentos").update({ realizado: true, pago_em: m.data, conta_id: m.conta_id }).eq("id", lancId).eq("empresa_id", empresaId);
     await sb.from("extrato").update({ status: "conciliado", lancamento_id: lancId }).eq("id", movId).eq("empresa_id", empresaId);
   }
   return pares.size;

@@ -136,3 +136,22 @@ test("Certificado A1: lê titular, CNPJ e validade; recusa senha errada", () => 
   assert.equal(info.validoAte.toISOString().slice(0, 10), "2027-01-01");
   assert.throws(() => lerCertificadoA1(bytes, "errada"), /senha/);
 });
+
+import { lerNFe } from "../lib/nfe-xml.ts";
+test("lê XML de NF-e de compra com dois itens", () => {
+  const xml = `<?xml version="1.0"?><nfeProc xmlns="http://www.portalfiscal.inf.br/nfe"><NFe><infNFe Id="NFe35261012345678000199550010000012341000012345" versao="4.00">
+  <ide><serie>1</serie><nNF>1234</nNF><dhEmi>2026-10-05T10:00:00-03:00</dhEmi></ide>
+  <emit><CNPJ>12345678000199</CNPJ><xNome>DURATEX SA</xNome><xFant>Duratex</xFant></emit><dest><CNPJ>11222333000181</CNPJ></dest>
+  <det nItem="1"><prod><cProd>MDF18BR</cProd><xProd>MDF BRANCO 18MM</xProd><NCM>44111310</NCM><CFOP>5101</CFOP><uCom>CH</uCom><qCom>10.0000</qCom><vUnCom>220.00</vUnCom><vProd>2200.00</vProd></prod></det>
+  <det nItem="2"><prod><cProd>DOB35</cProd><xProd>DOBRADICA 35MM</xProd><NCM>83021000</NCM><CFOP>5102</CFOP><uCom>un</uCom><qCom>50</qCom><vUnCom>4.5</vUnCom><vProd>225.00</vProd></prod></det>
+  <total><ICMSTot><vNF>2425.00</vNF></ICMSTot></total></infNFe></NFe></nfeProc>`;
+  const n = lerNFe(xml);
+  assert.equal(n.chave, "35261012345678000199550010000012341000012345");
+  assert.equal(n.numero, "1234");
+  assert.equal(n.emitenteNome, "Duratex");
+  assert.equal(n.valor, 2425);
+  assert.equal(n.itens.length, 2);
+  assert.equal(n.itens[1].unidade, "UN");
+  assert.equal(n.itens[0].quantidade, 10);
+  assert.equal(n.emissao, "2026-10-05");
+});
