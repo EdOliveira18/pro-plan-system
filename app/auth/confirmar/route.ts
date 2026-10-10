@@ -8,5 +8,5 @@ export async function GET(req: NextRequest) {
     const supabase = await supabaseServidor();
     await supabase.auth.exchangeCodeForSession(code);
   }
-  return NextResponse.redirect(new URL("/onboarding", req.url));
+  return NextResponse.redirect(new URL("/dashboard", req.url));
 }

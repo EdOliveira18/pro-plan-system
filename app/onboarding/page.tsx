@@ -22,6 +22,7 @@ export default async function Onboarding({ searchParams }: { searchParams: Promi
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
   if (!sp.nova) {
+    await supabase.rpc("aceitar_convites");
     const { count } = await supabase.from("membros").select("*", { count: "exact", head: true }).eq("user_id", user.id);
     if (count) redirect("/dashboard");
   }
@@ -32,7 +33,7 @@ export default async function Onboarding({ searchParams }: { searchParams: Promi
         <p className="sub" style={{ marginBottom: 16 }}>Tudo que você criar fica separado por empresa. Depois dá para adicionar outros CNPJs.</p>
         {sp.erro && <div className="erro">{sp.erro}</div>}
         <form action={criar} className="grid" style={{ gap: 12 }}>
-          <label>Seu nome<input name="seu_nome" required /></label>
+          <label>Seu nome<input name="seu_nome" required defaultValue={String(user.user_metadata?.nome ?? "")} /></label>
           <label>Nome da loja ou marcenaria<input name="nome" required /></label>
           <label>CNPJ<input name="cnpj" placeholder="00.000.000/0000-00" /></label>
           <button className="btn primary">Criar empresa</button>

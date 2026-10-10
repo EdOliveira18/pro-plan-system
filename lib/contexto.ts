@@ -22,11 +22,14 @@ export async function contexto(): Promise<Contexto> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: membros } = await supabase
+  const buscar = () => supabase
     .from("membros")
     .select("papel, nome, empresa:empresas(id, nome, cnpj)")
     .eq("user_id", user.id)
     .eq("ativo", true);
+  // convites pendentes para o e-mail dessa pessoa viram acesso à empresa antes de montar a lista
+  await supabase.rpc("aceitar_convites");
+  const { data: membros } = await buscar();
 
   const lista = (membros ?? []).filter((m) => m.empresa) as unknown as { papel: string; nome: string; empresa: Empresa }[];
   if (!lista.length) redirect("/onboarding");

@@ -33,7 +33,10 @@ const MENU: { grupo: string; itens: { href: string; nome: string; icone: string;
     { href: "/radar", nome: "Radar de Prazos", icone: "radar", pronto: true },
     { href: "/assistencia", nome: "Assistência Técnica", icone: "at", pronto: false },
   ]},
-  { grupo: "Administrativo", itens: [{ href: "/financeiro", nome: "Financeiro", icone: "fin", pronto: false }] },
+  { grupo: "Administrativo", itens: [
+    { href: "/financeiro", nome: "Financeiro", icone: "fin", pronto: false },
+    { href: "/equipe", nome: "Equipe", icone: "cli", pronto: true },
+  ]},
 ];
 
 export default function Sidebar({ empresa, empresas, nome, email }: { empresa: Empresa; empresas: Empresa[]; nome: string; email: string }) {
