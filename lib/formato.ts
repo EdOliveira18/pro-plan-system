@@ -31,3 +31,14 @@ export function diasAte(d: string): number {
   hoje.setHours(12, 0, 0, 0);
   return Math.round((alvo - hoje.getTime()) / 864e5);
 }
+
+// Lê valor digitado no padrão brasileiro: "R$ 20.000,00", "20.000", "20000,5", "20000.50"
+export function lerValor(v: unknown): number {
+  if (typeof v === "number") return isFinite(v) ? v : 0;
+  let s = String(v ?? "").replace(/[^\d,.\-]/g, "");
+  if (!s) return 0;
+  if (s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
+  else if ((s.match(/\./g) || []).length > 1 || /\.\d{3}$/.test(s)) s = s.replace(/\./g, "");
+  const x = parseFloat(s);
+  return isFinite(x) ? x : 0;
+}

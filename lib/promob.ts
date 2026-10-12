@@ -4,7 +4,7 @@
 import { XMLParser } from "fast-xml-parser";
 
 export type PecaImportada = { codigo?: string; descricao: string; quantidade: number; custo_unitario: number };
-export type AmbienteImportado = { nome: string; descricao?: string; custo_fabrica: number; pecas: PecaImportada[] };
+export type AmbienteImportado = { nome: string; descricao?: string; custo_fabrica: number; valor_venda?: number; prazo_dias?: number; pecas: PecaImportada[] };
 
 const MAPA_AMBIENTE = /^(ambient|ambiente|environment|room|ambientes)$/i;
 const MAPA_NOME = ["DESCRIPTION", "DESCRICAO", "NAME", "NOME", "description", "descricao", "name", "nome"];

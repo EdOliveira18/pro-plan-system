@@ -170,3 +170,13 @@ test("datas seguem Brasília: 23h30 de Brasília ainda é o mesmo dia, mesmo já
   const m = mesAtual();
   assert.ok(m.de.endsWith("-01") && m.ate >= m.de);
 });
+
+import { lerValor } from "../lib/formato.ts";
+test("lerValor aceita o jeito que o vendedor digita", () => {
+  assert.equal(lerValor("R$ 20.000,00"), 20000);
+  assert.equal(lerValor("20.000"), 20000);
+  assert.equal(lerValor("20000,5"), 20000.5);
+  assert.equal(lerValor("20000.50"), 20000.5);
+  assert.equal(lerValor("1.234.567,89"), 1234567.89);
+  assert.equal(lerValor(""), 0);
+});

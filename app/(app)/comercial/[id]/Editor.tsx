@@ -2,10 +2,47 @@
 import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { calcularOlhinho, type Config, type Condicoes } from "@/lib/olhinho";
-import { brl, pct, dec } from "@/lib/formato";
-import { salvarCondicoes, salvarAmbiente, adicionarAmbiente, removerAmbiente, importarPromob, fecharContrato } from "./actions";
+import { brl, pct, dec, lerValor } from "@/lib/formato";
+import { salvarCondicoes, salvarAmbiente, adicionarAmbiente, removerAmbiente, importarArquivoProjeto, aplicarValorVendido, fecharContrato } from "./actions";
 
 type Amb = { id: string; nome: string; descricao: string | null; prazo_dias: number | null; custo_fabrica: number; pontuacao: number; origem: string };
+const LADO_MAX = 2048;
+const ACEITOS = ".xml,.txt,.csv,.tsv,.pdf,.png,.jpg,.jpeg,.webp,text/xml,text/plain,text/csv,application/pdf,image/*";
+
+// Imagem reduzida para no máximo 2048px em JPEG, para caber no envio e na leitura da IA
+async function canvasParaJpeg(desenhar: (c: CanvasRenderingContext2D, w: number, h: number) => Promise<void> | void, w0: number, h0: number): Promise<Blob> {
+  const esc = Math.min(1, LADO_MAX / Math.max(w0, h0));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(w0 * esc); canvas.height = Math.round(h0 * esc);
+  const c = canvas.getContext("2d")!;
+  c.fillStyle = "#fff"; c.fillRect(0, 0, canvas.width, canvas.height);
+  await desenhar(c, canvas.width, canvas.height);
+  return new Promise<Blob>((ok) => canvas.toBlob((b) => ok(b!), "image/jpeg", 0.85));
+}
+async function imagemReduzida(f: File): Promise<Blob> {
+  const bmp = await createImageBitmap(f);
+  return canvasParaJpeg((c, w, h) => c.drawImage(bmp, 0, 0, w, h), bmp.width, bmp.height);
+}
+// PDF: extrai o texto de todas as páginas; se for escaneado (sem texto), manda a 1ª página como imagem
+async function lerPdf(f: File): Promise<{ texto: string; imagem?: Blob }> {
+  const pdfjs = await import("pdfjs-dist");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+  const doc = await pdfjs.getDocument({ data: await f.arrayBuffer() }).promise;
+  let texto = "";
+  for (let i = 1; i <= Math.min(doc.numPages, 40); i++) {
+    const pg = await doc.getPage(i);
+    const tc = await pg.getTextContent();
+    texto += `\n--- página ${i} ---\n` + tc.items.map((it: any) => ("str" in it ? it.str + (it.hasEOL ? "\n" : " ") : "")).join("");
+  }
+  if (texto.replace(/[\s\-página\d]/g, "").length > 40) return { texto };
+  const pg = await doc.getPage(1);
+  const vp1 = pg.getViewport({ scale: 1 });
+  const escala = LADO_MAX / Math.max(vp1.width, vp1.height);
+  const vp = pg.getViewport({ scale: escala });
+  const imagem = await canvasParaJpeg(async (c) => { await pg.render({ canvasContext: c, viewport: vp }).promise; }, vp.width, vp.height);
+  return { texto: "", imagem };
+}
+
 const CORES: Record<string, string> = { fabrica: "var(--gold)", frete: "var(--accent)", comissao_loja: "var(--warn)", montagem: "var(--good)", impostos: "var(--bad)", outros: "var(--muted)" };
 
 export default function Editor(p: {
@@ -31,22 +68,65 @@ export default function Editor(p: {
   const mudarPts = (id: string, v: number) => setAmbs((a) => a.map((x) => (x.id === id ? { ...x, pontuacao: v } : x)));
   const aviso = (res: { ok: boolean; erro?: string }, ok?: string) => setMsg(res.ok ? (ok ? { t: "ok", m: ok } : null) : { t: "erro", m: res.erro! });
 
+  const [lendo, setLendo] = useState(false);
+  const [vendido, setVendido] = useState("");
   async function importar(f: File | undefined) {
     if (!f) return;
     const fd = new FormData();
-    fd.set("arquivo", f);
+    setMsg(null);
+    setLendo(true);
+    try {
+      const nome = f.name.toLowerCase();
+      if (f.type === "application/pdf" || nome.endsWith(".pdf")) {
+        const { texto, imagem } = await lerPdf(f);
+        if (texto) fd.set("texto", texto);
+        if (imagem) fd.set("imagem", imagem, "pagina1.jpg");
+      } else if (f.type.startsWith("image/")) {
+        fd.set("imagem", await imagemReduzida(f), "imagem.jpg");
+      }
+      // o original segue junto para ficar salvo no orçamento, se couber no envio
+      fd.set("arquivo", f.size < 3_500_000 || !(fd.has("texto") || fd.has("imagem")) ? f : new File([], f.name, { type: f.type }));
+    } catch {
+      setLendo(false);
+      return setMsg({ t: "erro", m: "Não consegui abrir esse arquivo no navegador. Tente exportar de novo ou mandar em PDF." });
+    }
     start(async () => {
-      const res = await importarPromob(p.orcamentoId, fd);
-      aviso(res as any, res.ok ? `${(res as any).qtd} ambiente(s) importados de ${f.name}` : undefined);
+      const res = await importarArquivoProjeto(p.orcamentoId, fd);
+      setLendo(false);
+      setMsg(res.ok ? { t: "ok", m: `${res.qtd} ambiente(s) importados de ${f.name}.${res.aviso ? " " + res.aviso : ""}` } : { t: "erro", m: res.erro });
       router.refresh();
     });
   }
+  function aplicarVendido() {
+    const v = lerValor(vendido);
+    if (!(v > 0)) return setMsg({ t: "erro", m: "Informe o valor vendido do projeto." });
+    start(async () => {
+      const res = await aplicarValorVendido(p.orcamentoId, v);
+      aviso(res, `Valor vendido de ${brl(v)} aplicado. A pontuação de cada ambiente foi ajustada.`);
+      if (res.ok) { setVendido(""); router.refresh(); }
+    });
+  }
+  // valor de venda de um ambiente: vira pontuação = venda / custo
+  function mudarVenda(a: Amb, texto: string) {
+    const v = lerValor(texto);
+    if (!(v > 0) || !(a.custo_fabrica > 0)) return;
+    const pts = Math.round((v / a.custo_fabrica) * 1e6) / 1e6;
+    mudarPts(a.id, pts);
+    salvarAmbiente(p.orcamentoId, a.id, { pontuacao: pts });
+  }
+  function mudarCusto(a: Amb, texto: string) {
+    const c = lerValor(texto);
+    if (!(c >= 0) || c === a.custo_fabrica) return;
+    setAmbs((l) => l.map((x) => (x.id === a.id ? { ...x, custo_fabrica: c } : x)));
+    salvarAmbiente(p.orcamentoId, a.id, { custo_fabrica: c });
+  }
   async function addManual(form: HTMLFormElement) {
     const fd = new FormData(form);
-    const nome = String(fd.get("nome")).trim(), custo = Number(String(fd.get("custo")).replace(",", "."));
-    if (!nome || !(custo > 0)) return setMsg({ t: "erro", m: "Informe nome e custo de fábrica do ambiente." });
+    const nome = String(fd.get("nome") ?? "").trim(), custo = lerValor(fd.get("custo")), venda = lerValor(fd.get("venda"));
+    if (!nome) return setMsg({ t: "erro", m: "Informe o nome do ambiente." });
+    if (!(custo > 0)) return setMsg({ t: "erro", m: "Informe o custo de fábrica do ambiente (ex.: 20.000,00)." });
     start(async () => {
-      const res = await adicionarAmbiente(p.orcamentoId, { nome, custo_fabrica: custo, prazo_dias: Number(fd.get("prazo")) || 45 });
+      const res = await adicionarAmbiente(p.orcamentoId, { nome, custo_fabrica: custo, prazo_dias: Number(fd.get("prazo")) || 45, valor_venda: venda || undefined });
       aviso(res);
       if (res.ok) { form.reset(); router.refresh(); }
     });
@@ -75,25 +155,29 @@ export default function Editor(p: {
           <h2>Ambientes do projeto</h2>
           {!bloqueado && (
             <label className="drop" style={{ cursor: "pointer" }}>
-              <b style={{ color: "var(--fg)" }}>Importar XML ou TXT exportado do Promob</b>
-              <span className="note">Cada ambiente vira uma linha com custo de fábrica, e as peças ficam salvas para o diff pós-medição.</span>
-              <span className="btn">{pend ? "Processando…" : "Escolher arquivo"}</span>
-              <input type="file" accept=".xml,.txt,text/xml,text/plain" hidden onChange={(e) => { importar(e.target.files?.[0]); e.target.value = ""; }} />
+              <b style={{ color: "var(--fg)" }}>Importar orçamento ou projeto</b>
+              <span className="note">PDF, foto ou print, planilha CSV, ou XML/TXT do Promob. Cada ambiente vira uma linha com custo e valor de venda; no XML do Promob as peças ficam salvas para o diff pós-medição.</span>
+              <span className="btn">{lendo || pend ? "Lendo arquivo…" : "Escolher arquivo"}</span>
+              <input type="file" accept={ACEITOS} hidden disabled={lendo || pend} onChange={(e) => { importar(e.target.files?.[0]); e.target.value = ""; }} />
             </label>
           )}
           {ambs.length > 0 && (
             <div className="scroll mt"><table>
-              <thead><tr><th>Ambiente</th><th className="r">Prazo</th><th className="r">Custo fábrica</th><th className="r">Pontuação</th><th className="r">Preço sugerido</th><th></th></tr></thead>
+              <thead><tr><th>Ambiente</th><th className="r">Prazo</th><th className="r">Custo fábrica</th><th className="r">Pontuação</th><th className="r">Valor de venda</th><th></th></tr></thead>
               <tbody>{ambs.map((a) => (
                 <tr key={a.id}>
-                  <td><b>{a.nome}</b> {a.origem === "promob" && <span className="pill p-info">Promob</span>}<div className="note">{a.descricao}</div></td>
+                  <td><b>{a.nome}</b> {a.origem === "promob" && <span className="pill p-info">Promob</span>}{a.origem === "ia" && <span className="pill p-info">IA</span>}<div className="note">{a.descricao}</div></td>
                   <td className="r num">{a.prazo_dias ?? "n/a"} d</td>
-                  <td className="r num">{brl(a.custo_fabrica)}</td>
-                  <td className="r"><input className="pts num" type="number" step="0.05" min="1" value={a.pontuacao} disabled={bloqueado}
+                  <td className="r">{bloqueado ? <span className="num">{brl(a.custo_fabrica)}</span> :
+                    <input key={`c${a.id}${a.custo_fabrica}`} className="num" inputMode="decimal" defaultValue={dec(a.custo_fabrica)} style={{ width: 120, textAlign: "right", color: a.custo_fabrica > 0 ? undefined : "var(--bad)" }}
+                      onBlur={(e) => mudarCusto(a, e.target.value)} aria-label={`Custo de fábrica de ${a.nome}`} />}</td>
+                  <td className="r"><input className="pts num" type="number" step="0.05" min="1" value={Math.round(a.pontuacao * 1000) / 1000} disabled={bloqueado}
                     style={{ color: a.pontuacao < p.cfg.pontuacao_minima ? "var(--bad)" : undefined }}
                     onChange={(e) => mudarPts(a.id, Number(e.target.value))}
                     onBlur={(e) => salvarAmbiente(p.orcamentoId, a.id, { pontuacao: Number(e.target.value) })} aria-label={`Pontuação de ${a.nome}`} /></td>
-                  <td className="r num"><b>{brl(a.custo_fabrica * a.pontuacao)}</b></td>
+                  <td className="r">{bloqueado || !(a.custo_fabrica > 0) ? <b className="num">{brl(a.custo_fabrica * a.pontuacao)}</b> :
+                    <input key={`v${a.id}${a.pontuacao}`} className="num" inputMode="decimal" defaultValue={dec(a.custo_fabrica * a.pontuacao)} style={{ width: 130, textAlign: "right", fontWeight: 600 }}
+                      onBlur={(e) => mudarVenda(a, e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} aria-label={`Valor de venda de ${a.nome}`} />}</td>
                   <td>{!bloqueado && <button className="btn sm" aria-label="Remover ambiente" onClick={() => start(async () => { aviso(await removerAmbiente(p.orcamentoId, a.id)); router.refresh(); })}>×</button>}</td>
                 </tr>
               ))}</tbody>
@@ -102,13 +186,23 @@ export default function Editor(p: {
           {!bloqueado && (
             <details style={{ marginTop: 12 }}>
               <summary style={{ cursor: "pointer", color: "var(--accent)", fontWeight: 600, fontSize: 13 }}>Adicionar ambiente manualmente</summary>
-              <form onSubmit={(e) => { e.preventDefault(); addManual(e.currentTarget); }} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto", gap: 8, alignItems: "end", marginTop: 8 }}>
+              <form onSubmit={(e) => { e.preventDefault(); addManual(e.currentTarget); }} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, alignItems: "end", marginTop: 8 }}>
                 <label>Ambiente<input name="nome" placeholder="Ex.: Lavanderia" /></label>
-                <label>Custo fábrica (R$)<input name="custo" inputMode="decimal" /></label>
+                <label>Custo fábrica (R$)<input name="custo" inputMode="decimal" placeholder="20.000,00" /></label>
+                <label>Valor vendido (R$)<input name="venda" inputMode="decimal" placeholder="Opcional" /></label>
                 <label>Prazo (dias)<input name="prazo" type="number" defaultValue={45} /></label>
-                <button className="btn">Adicionar</button>
+                <button className="btn" disabled={pend}>Adicionar</button>
               </form>
             </details>
+          )}
+          {!bloqueado && ambs.some((a) => a.custo_fabrica > 0) && (
+            <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap", marginTop: 16, paddingTop: 12, borderTop: "1px solid var(--line, rgba(127,127,127,.2))" }}>
+              <label style={{ flex: "1 1 220px" }}>Valor vendido do projeto (R$)
+                <input inputMode="decimal" placeholder={dec(r.valorProposta)} value={vendido} onChange={(e) => setVendido(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") aplicarVendido(); }} />
+              </label>
+              <button className="btn" disabled={pend || !vendido} onClick={aplicarVendido}>Aplicar valor vendido</button>
+              <span className="note" style={{ flexBasis: "100%" }}>Fecha a proposta exatamente nesse valor (já com o desconto) e distribui entre os ambientes pelo custo de cada um.</span>
+            </div>
           )}
         </div>
 

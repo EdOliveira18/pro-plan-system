@@ -2,7 +2,9 @@
 import { revalidatePath } from "next/cache";
 import { contexto, configuracaoEmpresa, type Contexto } from "@/lib/contexto";
 import { calcularOlhinho } from "@/lib/olhinho";
-import { importarArquivoPromob } from "@/lib/importacao";
+import { importarArquivoPromob, gravarAmbientesImportados } from "@/lib/importacao";
+import { extrairAmbientesIA } from "@/lib/importacao-ia";
+import { lerPromob } from "@/lib/promob";
 
 type Resp = { ok: true; id?: string } | { ok: false; erro: string };
 
@@ -40,10 +42,11 @@ export async function salvarAmbiente(orcId: string, ambId: string, campos: { pon
   return { ok: true };
 }
 
-export async function adicionarAmbiente(orcId: string, a: { nome: string; custo_fabrica: number; prazo_dias: number }): Promise<Resp> {
+export async function adicionarAmbiente(orcId: string, a: { nome: string; custo_fabrica: number; prazo_dias: number; valor_venda?: number }): Promise<Resp> {
   const ctx = await contexto();
+  const pontuacao = a.valor_venda && a.valor_venda > 0 && a.custo_fabrica > 0 ? Math.round((a.valor_venda / a.custo_fabrica) * 1e6) / 1e6 : 3;
   const { data, error } = await ctx.supabase.from("ambientes").insert({
-    empresa_id: ctx.empresa.id, orcamento_id: orcId, nome: a.nome, custo_fabrica: a.custo_fabrica, prazo_dias: a.prazo_dias, pontuacao: 3, origem: "manual",
+    empresa_id: ctx.empresa.id, orcamento_id: orcId, nome: a.nome, custo_fabrica: a.custo_fabrica, prazo_dias: a.prazo_dias, pontuacao, origem: "manual",
   }).select("id").single();
   if (error) return { ok: false, erro: error.message };
   await recalcularSnapshot(ctx, orcId);
@@ -69,6 +72,65 @@ export async function importarPromob(orcId: string, fd: FormData): Promise<Resp 
     await recalcularSnapshot(ctx, orcId);
     revalidatePath(`/comercial/${orcId}`);
     return { ok: true, qtd };
+  } catch (e) {
+    return { ok: false, erro: (e as Error).message };
+  }
+}
+
+// Valor vendido do projeto inteiro: ajusta a pontuação de todos os ambientes (mesmo markup em cada um)
+// para que o valor da proposta, já com o desconto, feche exatamente no valor digitado.
+export async function aplicarValorVendido(orcId: string, valor: number): Promise<Resp> {
+  if (!(valor > 0)) return { ok: false, erro: "Informe o valor vendido do projeto." };
+  const ctx = await contexto();
+  const [{ data: o }, { data: ambs }] = await Promise.all([
+    ctx.supabase.from("orcamentos").select("desconto_pct").eq("id", orcId).single(),
+    ctx.supabase.from("ambientes").select("id, custo_fabrica").eq("orcamento_id", orcId).eq("versao", 1),
+  ]);
+  const custo = (ambs ?? []).reduce((s, a) => s + Number(a.custo_fabrica), 0);
+  if (!(custo > 0)) return { ok: false, erro: "Informe o custo de fábrica dos ambientes antes do valor vendido." };
+  const fator = 1 - Number(o?.desconto_pct ?? 0) / 100;
+  if (!(fator > 0)) return { ok: false, erro: "Desconto inválido." };
+  const pontuacao = Math.round((valor / fator / custo) * 1e6) / 1e6;
+  const { error } = await ctx.supabase.from("ambientes").update({ pontuacao }).eq("orcamento_id", orcId).eq("versao", 1).gt("custo_fabrica", 0);
+  if (error) return { ok: false, erro: error.message };
+  await recalcularSnapshot(ctx, orcId);
+  revalidatePath(`/comercial/${orcId}`);
+  return { ok: true };
+}
+
+// Importação de qualquer arquivo: XML/TXT do Promob pelo leitor próprio; PDF, imagem, CSV e o que o leitor
+// do Promob não entender vão para a IA. "texto" e "imagem" chegam preparados pelo navegador.
+export async function importarArquivoProjeto(orcId: string, fd: FormData): Promise<Resp & { qtd?: number; aviso?: string }> {
+  const ctx = await contexto();
+  const arquivo = fd.get("arquivo");
+  if (!(arquivo instanceof File) || !arquivo.size) return { ok: false, erro: "Escolha um arquivo." };
+  const nome = arquivo.name.toLowerCase();
+  const texto = String(fd.get("texto") ?? "");
+  const imagem = fd.get("imagem");
+  try {
+    let lidos: Awaited<ReturnType<typeof extrairAmbientesIA>>["ambientes"] = [];
+    let valorTotal = 0;
+    let origem: "promob" | "ia" = "ia";
+    if (/\.(xml|txt)$/.test(nome)) {
+      lidos = lerPromob(await arquivo.text(), arquivo.name);
+      if (lidos.length) origem = "promob";
+    }
+    if (!lidos.length) {
+      let img: { base64: string; mime: string } | undefined;
+      if (imagem instanceof Blob && imagem.size) img = { base64: Buffer.from(await imagem.arrayBuffer()).toString("base64"), mime: imagem.type || "image/jpeg" };
+      const txt = texto || (/\.(xml|txt|csv|tsv)$/.test(nome) ? await arquivo.text() : "");
+      const r = await extrairAmbientesIA({ texto: txt || undefined, imagem: img });
+      lidos = r.ambientes;
+      valorTotal = r.valorTotal;
+    }
+    if (!lidos.length) return { ok: false, erro: "Não encontrei ambientes nesse arquivo. Confira se é o orçamento ou o projeto, ou adicione os ambientes manualmente." };
+    const qtd = await gravarAmbientesImportados(ctx, orcId, arquivo, lidos, 1, origem);
+    // documento com só o total vendido (sem valor por ambiente): distribui pelo custo
+    if (valorTotal > 0 && !lidos.some((a) => a.valor_venda)) await aplicarValorVendido(orcId, valorTotal);
+    await recalcularSnapshot(ctx, orcId);
+    revalidatePath(`/comercial/${orcId}`);
+    const semCusto = lidos.filter((a) => !(a.custo_fabrica > 0)).length;
+    return { ok: true, qtd, aviso: semCusto ? `${semCusto} ambiente(s) vieram sem custo de fábrica. Preencha na tabela.` : undefined };
   } catch (e) {
     return { ok: false, erro: (e as Error).message };
   }
